@@ -2,6 +2,6 @@ services:
   - type: web
     name: imainventory
     runtime: docker
-    dockerfilePath: Dockerfile
+    dockerfilePath: backend/Dockerfile
     dockerContext: backend
     plan: free

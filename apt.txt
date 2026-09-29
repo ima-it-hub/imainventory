@@ -1,0 +1,4 @@
+unixodbc
+unixodbc-dev
+libodbc2
+odbc-postgresql

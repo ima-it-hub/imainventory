@@ -8,7 +8,7 @@ function getOdbcModule() {
     try {
       odbcModule = require('odbc');
     } catch (error) {
-      throw new Error('ODBC is unavailable. Install the unixODBC runtime and PostgreSQL ODBC driver.', { cause: error });
+      throw new Error(`ODBC native module could not load: ${error.message}`, { cause: error });
     }
   }
   return odbcModule;

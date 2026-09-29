@@ -1,12 +1,23 @@
-const odbc = require('odbc');
 const config = require('../config');
 
 let connectionPromise = null;
+let odbcModule = null;
+
+function getOdbcModule() {
+  if (!odbcModule) {
+    try {
+      odbcModule = require('odbc');
+    } catch (error) {
+      throw new Error('ODBC is unavailable. Install the unixODBC runtime and PostgreSQL ODBC driver.', { cause: error });
+    }
+  }
+  return odbcModule;
+}
 
 async function getConnection() {
   if (!connectionPromise) {
     connectionPromise = new Promise((resolve, reject) => {
-      odbc.connect(config.database.odbc.connectionString, (err, conn) => {
+      getOdbcModule().connect(config.database.odbc.connectionString, (err, conn) => {
         if (err) {
           reject(err);
           return;

@@ -2,7 +2,6 @@ services:
   - type: web
     name: imainventory
     runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    dockerContext: ..
+    dockerfilePath: backend/Dockerfile
+    dockerContext: .
     plan: free

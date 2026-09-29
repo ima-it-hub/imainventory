@@ -5,10 +5,10 @@ module.exports = {
   },
   database: {
     odbc: {
-      dsn: process.env.ODBC_DSN || 'basse silw',
+      dsn: process.env.ODBC_DSN || 'basse silwan',
       connectionString:
         process.env.ODBC_CONNECTION_STRING ||
-        'Driver={PostgreSQL Unicode};Server=191.164.16.153;Port=5432;Database=rp_central;Uid=postgres;Pwd=;sslmode=disable;',
+        'Driver={PostgreSQL Unicode(x64)};Server=191.164.16.153;Port=5432;Database=rp_central;Uid=postgres;Pwd=;sslmode=disable;',
     },
     postgres: {
       connectionString:

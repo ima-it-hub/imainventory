@@ -18,7 +18,13 @@ const { ADMIN_CREDENTIALS, sanitizeAllowedPages, VALID_PAGES } = require('./src/
 const config = require('./src/config');
 
 const app = express();
-app.use(cors({ origin: config.app.corsOrigin, credentials: true }));
+app.use(cors({
+  origin(origin, callback) {
+    const isRenderFrontend = /^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(origin || '');
+    callback(null, !origin || origin === config.app.corsOrigin || isRenderFrontend);
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {

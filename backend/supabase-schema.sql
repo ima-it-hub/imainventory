@@ -66,6 +66,12 @@ CREATE TABLE IF NOT EXISTS logistics_order_physical_counts (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS logistics_order_details (
+  order_number VARCHAR(100) PRIMARY KEY,
+  details JSONB NOT NULL DEFAULT '[]'::jsonb,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS asset_categories (
   id SERIAL PRIMARY KEY,
   name VARCHAR(150) NOT NULL UNIQUE,

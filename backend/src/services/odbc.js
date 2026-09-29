@@ -129,9 +129,27 @@ async function getLogisticsOrdersFromOdbc() {
 }
 
 async function getLogisticsOrderDetailsFromOdbc(identifier) {
-  const sql = `
+  return queryOdbc(getLogisticsOrderDetailsSql(`AND (d."Oid"::text = ? OR d."Reference" = ?)`), [
+    String(identifier),
+    String(identifier),
+  ]);
+}
+
+async function getLogisticsOrderDetailsForSyncFromOdbc() {
+  const sql = getLogisticsOrderDetailsSql(`
+    AND (d."DocumentCategory4" != 9 OR d."DocumentCategory4" IS NULL)
+    AND d."WarehouseSource" IN (6, 6)
+    AND d."Date" >= '2026-01-01'
+  `);
+
+  return queryOdbc(sql);
+}
+
+function getLogisticsOrderDetailsSql(additionalFilters) {
+  return `
     SELECT
       d."Oid",
+      d."Reference",
       dd."Batch",
       dd."Label1",
       dd."Quantity",
@@ -166,10 +184,8 @@ async function getLogisticsOrderDetailsFromOdbc(identifier) {
     WHERE d."Type" IN (4, 4)
       AND d."DeleteDate" IS NULL
       AND dd."Warehouse" = 6
-      AND (d."Oid"::text = ? OR d."Reference" = ?);
+      ${additionalFilters};
   `;
-
-  return queryOdbc(sql, [String(identifier), String(identifier)]);
 }
 
 module.exports = {
@@ -177,5 +193,6 @@ module.exports = {
   getStockSnapshot,
   getLogisticsOrdersFromOdbc,
   getLogisticsOrderDetailsFromOdbc,
+  getLogisticsOrderDetailsForSyncFromOdbc,
   getConnection,
 };

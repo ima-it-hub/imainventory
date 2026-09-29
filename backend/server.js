@@ -10,9 +10,14 @@ const {
 const {
   getStockSnapshot,
   getLogisticsOrdersFromOdbc,
-  getLogisticsOrderDetailsFromOdbc,
+  getLogisticsOrderDetailsForSyncFromOdbc,
 } = require('./src/services/odbc');
 const { computeReconciliation } = require('./src/lib/reconciliation');
+const {
+  buildOrderDetailSnapshots,
+  attachSavedOrderQuantities,
+  serializeOrderDetailSnapshots,
+} = require('./src/lib/logistics-order-details');
 const { initializeDatabase } = require('./src/services/init-db');
 const { ADMIN_CREDENTIALS, sanitizeAllowedPages, VALID_PAGES } = require('./src/lib/access');
 const config = require('./src/config');
@@ -616,27 +621,17 @@ app.get('/api/logistics/orders', async (req, res) => {
 app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
   try {
     const orderNumber = String(req.params.orderNumber);
-    const [odbcDetails, savedRows] = await Promise.all([
-      getLogisticsOrderDetailsFromOdbc(orderNumber),
+    const [detailRows, savedRows] = await Promise.all([
+      query('SELECT details FROM logistics_order_details WHERE order_number = $1', [orderNumber]),
       query('SELECT physical_quantities, control_quantities FROM logistics_order_physical_counts WHERE order_number = $1', [orderNumber]),
     ]);
     const savedQuantities = savedRows[0]?.physical_quantities || {};
     const savedControlQuantities = savedRows[0]?.control_quantities || {};
-    const details = odbcDetails.map((detail) => {
-      const detailKey = JSON.stringify([
-        String(detail.Document ?? ''),
-        String(detail.Batch ?? ''),
-        String(detail.Label1 ?? ''),
-        String(detail.Quantity ?? ''),
-      ]);
-
-      return {
-        ...detail,
-        detailKey,
-        physicalQuantity: savedQuantities[detailKey] ?? '',
-        controlQuantity: savedControlQuantities[detailKey] ?? '',
-      };
-    });
+    const details = attachSavedOrderQuantities(
+      detailRows[0]?.details || [],
+      savedQuantities,
+      savedControlQuantities,
+    );
     const payload = JSON.stringify(
       { details, count: details.length },
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
@@ -778,7 +773,10 @@ app.post('/api/logistics/orders', async (req, res) => {
 
 app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
   try {
-    const rows = await getLogisticsOrdersFromOdbc();
+    const [rows, detailRows] = await Promise.all([
+      getLogisticsOrdersFromOdbc(),
+      getLogisticsOrderDetailsForSyncFromOdbc(),
+    ]);
     let inserted = 0;
 
     for (const row of rows || []) {
@@ -825,6 +823,17 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       if (result.length) {
         inserted += 1;
       }
+    }
+
+    const detailSnapshots = buildOrderDetailSnapshots(detailRows);
+    if (detailSnapshots.length) {
+      await query(`
+        INSERT INTO logistics_order_details (order_number, details, synced_at)
+        SELECT order_number, details, NOW()
+        FROM jsonb_to_recordset($1::jsonb) AS snapshots(order_number TEXT, details JSONB)
+        ON CONFLICT (order_number) DO UPDATE
+        SET details = EXCLUDED.details, synced_at = EXCLUDED.synced_at;
+      `, [serializeOrderDetailSnapshots(detailSnapshots)]);
     }
 
     const allOrders = await query(`

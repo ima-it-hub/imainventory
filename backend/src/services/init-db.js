@@ -106,6 +106,14 @@ async function initializeDatabase() {
     );
   `;
 
+  const logisticsOrderDetailsTable = `
+    CREATE TABLE IF NOT EXISTS logistics_order_details (
+      order_number VARCHAR(100) PRIMARY KEY,
+      details JSONB NOT NULL DEFAULT '[]'::jsonb,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
   const assetCategoriesTable = `
     CREATE TABLE IF NOT EXISTS asset_categories (
       id SERIAL PRIMARY KEY,
@@ -190,6 +198,7 @@ async function initializeDatabase() {
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS ready_at TIMESTAMP;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;');
   await query(logisticsOrderPhysicalCountsTable);
+  await query(logisticsOrderDetailsTable);
   await query(assetCategoriesTable);
   await query(assetPlacesTable);
   await query(assetsTable);

@@ -774,10 +774,8 @@ app.post('/api/logistics/orders', async (req, res) => {
 
 app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
   try {
-    const [rows, detailRows] = await Promise.all([
-      getLogisticsOrdersFromOdbc(),
-      getLogisticsOrderDetailsForSyncFromOdbc(),
-    ]);
+    const rows = await getLogisticsOrdersFromOdbc();
+    const detailRows = await getLogisticsOrderDetailsForSyncFromOdbc();
     let inserted = 0;
 
     for (const row of rows || []) {

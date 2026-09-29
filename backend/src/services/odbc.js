@@ -17,7 +17,13 @@ function getOdbcModule() {
 async function getConnection() {
   if (!connectionPromise) {
     connectionPromise = new Promise((resolve, reject) => {
-      getOdbcModule().connect(config.database.odbc.connectionString, (err, conn) => {
+      const connectionString = config.database.odbc.connectionString;
+      if (typeof connectionString !== 'string' || !connectionString.trim()) {
+        reject(new Error('ODBC_CONNECTION_STRING must be a non-empty string.'));
+        return;
+      }
+
+      getOdbcModule().connect(connectionString, (err, conn) => {
         if (err) {
           reject(err);
           return;
@@ -36,8 +42,25 @@ async function getConnection() {
   return connectionPromise;
 }
 
-async function queryOdbc(sql, params = []) {
+async function queryOdbc(sql, params = [], options = {}) {
   const connection = await getConnection();
+
+  if (options.fetchSize) {
+    const cursor = await connection.query(sql, params, {
+      cursor: true,
+      fetchSize: options.fetchSize,
+    });
+    const rows = [];
+
+    try {
+      while (!cursor.noData) {
+        rows.push(...await cursor.fetch());
+      }
+      return rows;
+    } finally {
+      await cursor.close();
+    }
+  }
 
   return new Promise((resolve, reject) => {
     connection.query(sql, params, (err, rows) => {
@@ -142,7 +165,7 @@ async function getLogisticsOrderDetailsForSyncFromOdbc() {
     AND d."Date" >= '2026-01-01'
   `);
 
-  return queryOdbc(sql);
+  return queryOdbc(sql, [], { fetchSize: 500 });
 }
 
 function getLogisticsOrderDetailsSql(additionalFilters) {

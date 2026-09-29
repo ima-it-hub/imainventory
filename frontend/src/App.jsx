@@ -28,7 +28,8 @@ import UserAccessManagement from './components/UserAccessManagement'
 import AssetManagement from './components/AssetManagement'
 import './App.css'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000'
+const API_URL = import.meta.env.VITE_API_URL
+  || (import.meta.env.PROD ? 'https://imainventory.onrender.com' : 'http://localhost:4000')
 const DELIVERY_SCHEDULE_KEY = 'inventory-delivery-schedule'
 const AUTH_SESSION_KEY = 'inventory-auth-session'
 

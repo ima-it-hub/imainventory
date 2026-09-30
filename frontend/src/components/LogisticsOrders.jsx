@@ -2,6 +2,12 @@ import { Check, ChevronLeft, ChevronRight, Eye, Printer, Search, X } from 'lucid
 import { useEffect, useRef, useState } from 'react'
 
 const ORDER_PAGE_SIZE = 50
+const ORDER_STATUS_OPTIONS = [
+  { value: 'Pending', label: 'A Preparer' },
+  { value: 'Packing', label: 'Encours' },
+  { value: 'Ready', label: 'Preparer' },
+  { value: 'Delivered', label: 'livrer' },
+]
 
 function formatDeliveryDuration(seconds) {
   const value = Number(seconds)
@@ -294,10 +300,10 @@ export default function LogisticsOrders({
           </div>
 
           <div className="max-h-[calc(100vh-450px)] min-h-[260px] flex-1 overflow-auto">
-            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[900px] border-collapse text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
-                  {['Q', 'Client name', 'Wilaya', 'Date and time', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Actions'].map((label) => (
+                  {['Q', 'Client name', 'Wilaya', 'Date and time', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Status', 'Actions'].map((label) => (
                     <th key={label} className="border-b border-slate-200 px-4 py-3 font-semibold">{label}</th>
                   ))}
                 </tr>
@@ -307,21 +313,15 @@ export default function LogisticsOrders({
                   <tr
                     key={order.id}
                     tabIndex={0}
-                    onClick={() => {
-                      const currentStatusIndex = logisticsStatuses.indexOf(order.status)
-                      const nextStatus = logisticsStatuses[(currentStatusIndex + 1) % logisticsStatuses.length]
-                      onStatusChange(order.id, nextStatus)
-                    }}
+                    onClick={() => showOrderDetails(order)}
                     onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
+                      if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
                         event.preventDefault()
-                        const currentStatusIndex = logisticsStatuses.indexOf(order.status)
-                        const nextStatus = logisticsStatuses[(currentStatusIndex + 1) % logisticsStatuses.length]
-                        onStatusChange(order.id, nextStatus)
+                        showOrderDetails(order)
                       }
                     }}
                     className={`cursor-pointer border-b focus:outline-none ${getStatusClasses(order.status)} hover:brightness-[0.98]`}
-                    aria-label={`Change status for ${order.customerName}; current status ${order.status}`}
+                    aria-label={`View details for ${order.customerName}; current status ${order.status}`}
                   >
                     <td className="px-4 py-3 text-center">
                       <span
@@ -341,6 +341,18 @@ export default function LogisticsOrders({
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatDeliveryDuration(order.pendingToDeliveredSeconds)}</td>
                     <td className="px-4 py-3 text-slate-600">{order.preparedBy || order.employeePrepared || '—'}</td>
                     <td className="px-4 py-3 text-slate-600">{order.controlledBy || order.controllerEmployeeId || '—'}</td>
+                    <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
+                      <select
+                        value={order.status}
+                        onChange={(event) => onStatusChange(order.id, event.target.value)}
+                        aria-label={`Status for ${order.customerName}`}
+                        className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm font-semibold text-slate-800 outline-none focus:border-sky-600"
+                      >
+                        {ORDER_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-2">
                         <button
@@ -373,7 +385,7 @@ export default function LogisticsOrders({
                 ))}
                 {!visibleOrders.length && (
                   <tr>
-                    <td colSpan="9" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
+                    <td colSpan="10" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
                   </tr>
                 )}
               </tbody>

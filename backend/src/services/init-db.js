@@ -139,7 +139,7 @@ async function initializeDatabase() {
       place_id INTEGER NOT NULL REFERENCES asset_places(id) ON DELETE RESTRICT,
       purchase_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_value >= 0),
       current_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (current_value >= 0),
-      repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable' CHECK (repair_status IN ('Réparable', 'Irréparable')),
+      repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable' CHECK (repair_status IN ('Réparable', 'Irréparable', 'Sent to maintenance')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -209,6 +209,12 @@ async function initializeDatabase() {
   await query(`
     ALTER TABLE assets
     ADD COLUMN IF NOT EXISTS repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable';
+  `);
+  await query('ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_repair_status_check;');
+  await query(`
+    ALTER TABLE assets
+    ADD CONSTRAINT assets_repair_status_check
+    CHECK (repair_status IN ('Réparable', 'Irréparable', 'Sent to maintenance'));
   `);
   await query(`
     DO $$ BEGIN

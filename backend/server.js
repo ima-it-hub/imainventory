@@ -243,7 +243,7 @@ app.post('/api/assets', async (req, res) => {
       || !Number.isFinite(numericQuantity) || numericQuantity < 0
       || !Number.isFinite(numericPurchaseValue) || numericPurchaseValue < 0
       || !Number.isFinite(numericCurrentValue) || numericCurrentValue < 0
-      || !['Réparable', 'Irréparable'].includes(normalizedRepairStatus)) {
+      || !['Réparable', 'Irréparable', 'Sent to maintenance'].includes(normalizedRepairStatus)) {
       return res.status(400).json({ error: 'Enter a name, category, place, and valid non-negative quantity and values.' });
     }
 
@@ -279,7 +279,7 @@ app.put('/api/assets/:id', async (req, res) => {
       || !Number.isFinite(numericQuantity) || numericQuantity < 0
       || !Number.isFinite(numericPurchaseValue) || numericPurchaseValue < 0
       || !Number.isFinite(numericCurrentValue) || numericCurrentValue < 0
-      || !['Réparable', 'Irréparable'].includes(normalizedRepairStatus)) {
+      || !['Réparable', 'Irréparable', 'Sent to maintenance'].includes(normalizedRepairStatus)) {
       return res.status(400).json({ error: 'Enter a name, category, place, and valid non-negative quantity and values.' });
     }
 
@@ -302,8 +302,8 @@ app.put('/api/assets/:id', async (req, res) => {
 app.patch('/api/assets/:id/repair-status', async (req, res) => {
   try {
     const repairStatus = String(req.body?.repairStatus || '').trim();
-    if (!['Réparable', 'Irréparable'].includes(repairStatus)) {
-      return res.status(400).json({ error: 'Choose Réparable or Irréparable.' });
+    if (!['Réparable', 'Irréparable', 'Sent to maintenance'].includes(repairStatus)) {
+      return res.status(400).json({ error: 'Choose a valid asset repair status.' });
     }
 
     const isNotRepairable = repairStatus === 'Irréparable';

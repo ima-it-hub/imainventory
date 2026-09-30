@@ -1429,7 +1429,7 @@ function App() {
               </div>
 
               {activeView === 'inventory' || activeView === 'logistics' || activeView === 'qr-scan' ? (
-                <div className="header-actions flex items-center gap-3">
+                <div className="header-actions hidden items-center gap-3 md:flex">
                   <select
                     value={selectedWarehouse}
                     onChange={(e) => setSelectedWarehouse(String(e.target.value).trim())}

@@ -462,10 +462,11 @@ export default function AssetManagement({ apiUrl }) {
                       value={asset.repairStatus || 'Réparable'}
                       onChange={(event) => saveRepairStatus(asset, event.target.value)}
                       aria-label={`Repair status for ${asset.name}`}
-                      className={`rounded-md border px-2 py-1.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-400 ${asset.repairStatus === 'Irréparable' ? 'border-rose-300 bg-rose-100 text-rose-800' : 'border-emerald-300 bg-emerald-100 text-emerald-800'}`}
+                      className={`rounded-md border px-2 py-1.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-400 ${asset.repairStatus === 'Irréparable' ? 'border-rose-300 bg-rose-100 text-rose-800' : asset.repairStatus === 'Sent to maintenance' ? 'border-orange-300 bg-orange-100 text-orange-800' : 'border-emerald-300 bg-emerald-100 text-emerald-800'}`}
                     >
                       <option value="Réparable">Réparable</option>
                       <option value="Irréparable">Irréparable</option>
+                      <option value="Sent to maintenance">Sent to maintenance</option>
                     </select>
                   </td>
                   <td className="px-3 py-3"><div className="flex gap-2"><button type="button" onClick={() => startEdit(asset)} aria-label={`Edit ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => deleteAsset(asset)} aria-label={`Delete ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-rose-200 text-rose-700 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button></div></td>

@@ -8,16 +8,26 @@ body,
 
 .app-shell {
   height: 100vh;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.dashboard-layout {
+  height: 100%;
+  min-height: 0;
 }
 
 .main-panel {
+  height: 100vh;
+  min-height: 0;
   overflow: auto;
 }
 
 .app-header {
-  position: relative;
-  overflow: auto;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  flex-shrink: 0;
+  overflow: visible;
 }
 
 .app-header::before {

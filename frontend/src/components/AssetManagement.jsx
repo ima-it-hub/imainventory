@@ -19,6 +19,18 @@ function getAssetCurrentValue(asset) {
   return (Number(asset.quantity) || 0) * (Number(asset.currentValue) || 0)
 }
 
+function calculateCurrentValue(purchaseValue, depreciationPercentage) {
+  const purchase = Number(purchaseValue) || 0
+  const percentage = Number(depreciationPercentage) || 0
+  return Math.round((purchase - (purchase * percentage) / 100) * 100) / 100
+}
+
+function getDepreciationPercentage(purchaseValue, currentValue) {
+  const purchase = Number(purchaseValue) || 0
+  if (!purchase) return '0'
+  return String(Number((((purchase - (Number(currentValue) || 0)) / purchase) * 100).toFixed(6)))
+}
+
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -47,7 +59,7 @@ export default function AssetManagement({ apiUrl }) {
     quantity: '1',
     placeId: '',
     purchaseValue: '',
-    currentValue: '',
+    depreciationPercentage: '0',
     repairStatus: 'Réparable',
   })
 
@@ -161,7 +173,7 @@ export default function AssetManagement({ apiUrl }) {
   const placeTotals = summarizeBy('placeId', 'placeName', places)
 
   function resetForm() {
-    setForm({ name: '', categoryId: '', quantity: '1', placeId: '', purchaseValue: '', currentValue: '', repairStatus: 'Réparable' })
+    setForm({ name: '', categoryId: '', quantity: '1', placeId: '', purchaseValue: '', depreciationPercentage: '0', repairStatus: 'Réparable' })
     setEditingId(null)
     setActiveDialog(null)
   }
@@ -174,7 +186,7 @@ export default function AssetManagement({ apiUrl }) {
       quantity: String(asset.quantity),
       placeId: String(asset.placeId),
       purchaseValue: String(asset.purchaseValue),
-      currentValue: String(asset.currentValue ?? asset.purchaseValue),
+      depreciationPercentage: getDepreciationPercentage(asset.purchaseValue, asset.currentValue ?? asset.purchaseValue),
       repairStatus: asset.repairStatus || 'Réparable',
     })
     setError('')
@@ -188,19 +200,22 @@ export default function AssetManagement({ apiUrl }) {
       return
     }
 
+    const { depreciationPercentage: enteredPercentage, ...assetFields } = form
+    const depreciationPercentage = enteredPercentage === '' ? NaN : Number(enteredPercentage)
     const payload = {
-      ...form,
+      ...assetFields,
       categoryId: Number(form.categoryId),
       placeId: Number(form.placeId),
       quantity: Number(form.quantity),
       purchaseValue: Number(form.purchaseValue),
-      currentValue: form.currentValue === '' ? Number(form.purchaseValue) : Number(form.currentValue),
+      currentValue: calculateCurrentValue(form.purchaseValue, depreciationPercentage),
       repairStatus: form.repairStatus,
     }
     if (!Number.isFinite(payload.quantity) || payload.quantity < 0
       || !Number.isFinite(payload.purchaseValue) || payload.purchaseValue < 0
-      || !Number.isFinite(payload.currentValue) || payload.currentValue < 0) {
-      setError('Quantity and values must be non-negative numbers.')
+      || !Number.isFinite(depreciationPercentage)
+      || depreciationPercentage < 0 || depreciationPercentage > 100) {
+      setError('Quantity and purchase value must be non-negative, and depreciation must be between 0% and 100%.')
       return
     }
 
@@ -234,11 +249,14 @@ export default function AssetManagement({ apiUrl }) {
   }
 
   async function saveCurrentValue(asset) {
-    const currentValue = Number(currentValueDrafts[asset.id] ?? asset.currentValue)
-    if (!Number.isFinite(currentValue) || currentValue < 0) {
-      setError('Current value must be a non-negative number.')
+    const enteredPercentage = currentValueDrafts[asset.id]
+      ?? getDepreciationPercentage(asset.purchaseValue, asset.currentValue)
+    const depreciationPercentage = enteredPercentage === '' ? NaN : Number(enteredPercentage)
+    if (!Number.isFinite(depreciationPercentage) || depreciationPercentage < 0 || depreciationPercentage > 100) {
+      setError('Depreciation must be between 0% and 100%.')
       return
     }
+    const currentValue = calculateCurrentValue(asset.purchaseValue, depreciationPercentage)
 
     setSavingCurrentValueId(asset.id)
     setError('')
@@ -394,7 +412,7 @@ export default function AssetManagement({ apiUrl }) {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] border-collapse text-left text-sm">
-            <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>{['Asset', 'Category', 'Quantity', 'Place', 'Unit purchase value', 'Unit current value', 'Purchase total', 'Current total', 'QR', 'Status', 'Actions'].map((label) => <th key={label} className="border-b border-slate-200 px-3 py-2 font-semibold">{label}</th>)}</tr></thead>
+            <thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>{['Asset', 'Category', 'Quantity', 'Place', 'Unit purchase value', 'Depreciation (%)', 'Purchase total', 'Current total', 'QR', 'Status', 'Actions'].map((label) => <th key={label} className="border-b border-slate-200 px-3 py-2 font-semibold">{label}</th>)}</tr></thead>
             <tbody>
               {filteredAssets.map((asset) => (
                 <tr key={asset.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -408,9 +426,10 @@ export default function AssetManagement({ apiUrl }) {
                       <input
                         type="number"
                         min="0"
+                        max="100"
                         step="0.01"
                         disabled={asset.repairStatus === 'Irréparable'}
-                        value={currentValueDrafts[asset.id] ?? asset.currentValue ?? asset.purchaseValue}
+                        value={currentValueDrafts[asset.id] ?? getDepreciationPercentage(asset.purchaseValue, asset.currentValue ?? asset.purchaseValue)}
                         onChange={(event) => setCurrentValueDrafts((current) => ({ ...current, [asset.id]: event.target.value }))}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
@@ -418,20 +437,22 @@ export default function AssetManagement({ apiUrl }) {
                             saveCurrentValue(asset)
                           }
                         }}
-                        aria-label={`Current unit value for ${asset.name}`}
+                        aria-label={`Depreciation percentage for ${asset.name}`}
                         className="w-28 min-w-0 rounded-md border border-slate-300 px-2 py-2 text-sm text-slate-900 outline-none focus:border-sky-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
                       />
+                      <span className="text-xs text-slate-500">%</span>
                       <button
                         type="button"
                         onClick={() => saveCurrentValue(asset)}
                         disabled={savingCurrentValueId === asset.id || currentValueDrafts[asset.id] === undefined}
-                        title="Save current value"
-                        aria-label={`Save current value for ${asset.name}`}
+                        title="Save depreciation percentage"
+                        aria-label={`Save depreciation percentage for ${asset.name}`}
                         className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center border border-sky-200 text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <Check className="h-4 w-4" />
                       </button>
                     </div>
+                    <div className="mt-1 text-xs text-slate-500">Current: {formatCurrency(calculateCurrentValue(asset.purchaseValue, currentValueDrafts[asset.id] ?? getDepreciationPercentage(asset.purchaseValue, asset.currentValue ?? asset.purchaseValue)))}</div>
                   </td>
                   <td className="px-3 py-3 font-medium text-slate-900">{formatCurrency(getAssetValue(asset))}</td>
                   <td className="px-3 py-3 font-medium text-slate-900">{formatCurrency(getAssetCurrentValue(asset))}</td>
@@ -515,8 +536,9 @@ export default function AssetManagement({ apiUrl }) {
                     <input type="number" min="0" step="0.01" value={form.purchaseValue} onChange={(event) => setForm({ ...form, purchaseValue: event.target.value })} required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-sky-600" placeholder="0.00" />
                   </label>
                   <label className="text-sm font-medium text-slate-700">
-                    Unit current value
-                    <input type="number" min="0" step="0.01" value={form.currentValue} onChange={(event) => setForm({ ...form, currentValue: event.target.value })} className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-sky-600" placeholder="Defaults to purchase value" />
+                    Depreciation percentage
+                    <input type="number" min="0" max="100" step="0.01" value={form.depreciationPercentage} onChange={(event) => setForm({ ...form, depreciationPercentage: event.target.value })} required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-sky-600" placeholder="0" />
+                    <span className="mt-1 block text-xs text-slate-500">Calculated unit current value: {formatCurrency(calculateCurrentValue(form.purchaseValue, form.depreciationPercentage))}</span>
                   </label>
                 </div>
                 <footer className="flex justify-end gap-2 border-t border-slate-200 pt-4">

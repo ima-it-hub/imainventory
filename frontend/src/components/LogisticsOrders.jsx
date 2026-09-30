@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Eye, Printer, Search, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Eye, Printer, Search, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 const ORDER_PAGE_SIZE = 50
@@ -297,7 +297,7 @@ export default function LogisticsOrders({
             <table className="w-full min-w-[760px] border-collapse text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
-                  {['Client name', 'Wilaya', 'Date and time', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Actions'].map((label) => (
+                  {['Q', 'Client name', 'Wilaya', 'Date and time', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Actions'].map((label) => (
                     <th key={label} className="border-b border-slate-200 px-4 py-3 font-semibold">{label}</th>
                   ))}
                 </tr>
@@ -323,6 +323,17 @@ export default function LogisticsOrders({
                     className={`cursor-pointer border-b focus:outline-none ${getStatusClasses(order.status)} hover:brightness-[0.98]`}
                     aria-label={`Change status for ${order.customerName}; current status ${order.status}`}
                   >
+                    <td className="px-4 py-3 text-center">
+                      <span
+                        role="img"
+                        aria-label={order.quantitiesMatch ? 'Physical quantities match system quantities' : 'Physical quantities do not match system quantities'}
+                        title={order.quantitiesMatch ? 'Physical quantities match system quantities' : 'Physical quantities do not match system quantities'}
+                      >
+                        {order.quantitiesMatch
+                          ? <Check aria-hidden="true" className="mx-auto h-4 w-4 text-emerald-700" />
+                          : <X aria-hidden="true" className="mx-auto h-4 w-4 text-rose-700" />}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 font-semibold text-slate-900">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-600">{order.wilaya}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatOrderDate(order.createdAt)}</td>
@@ -362,7 +373,7 @@ export default function LogisticsOrders({
                 ))}
                 {!visibleOrders.length && (
                   <tr>
-                    <td colSpan="8" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
+                    <td colSpan="9" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
                   </tr>
                 )}
               </tbody>

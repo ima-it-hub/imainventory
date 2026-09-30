@@ -36,6 +36,19 @@ function attachSavedOrderQuantities(details, physicalQuantities = {}, controlQua
   });
 }
 
+function orderQuantitiesMatch(details, physicalQuantities = {}) {
+  if (!Array.isArray(details) || details.length === 0) return false;
+
+  return attachSavedOrderQuantities(details, physicalQuantities || {}).every((detail) => {
+    if (detail.physicalQuantity === '') return false;
+    const systemQuantity = Number(detail.Quantity);
+    const physicalQuantity = Number(detail.physicalQuantity);
+    return Number.isFinite(systemQuantity)
+      && Number.isFinite(physicalQuantity)
+      && systemQuantity === physicalQuantity;
+  });
+}
+
 function serializeOrderDetailSnapshots(snapshots) {
   return JSON.stringify(
     snapshots.map(({ orderNumber, details }) => ({ order_number: orderNumber, details })),
@@ -46,5 +59,6 @@ function serializeOrderDetailSnapshots(snapshots) {
 module.exports = {
   buildOrderDetailSnapshots,
   attachSavedOrderQuantities,
+  orderQuantitiesMatch,
   serializeOrderDetailSnapshots,
 };

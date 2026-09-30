@@ -60,6 +60,10 @@ function App() {
   const [query, setQuery] = useState('')
   const [items, setItems] = useState([])
   const [selectedItem, setSelectedItem] = useState(null)
+  const [auditHistory, setAuditHistory] = useState([])
+  const [auditHistoryLoading, setAuditHistoryLoading] = useState(false)
+  const [auditHistoryError, setAuditHistoryError] = useState('')
+  const [auditHistoryRevision, setAuditHistoryRevision] = useState(0)
   const [qrScanQuantity, setQrScanQuantity] = useState('')
   const [pendingOrderDetails, setPendingOrderDetails] = useState(null)
   const [currentUser, setCurrentUser] = useState(() => {
@@ -208,6 +212,36 @@ function App() {
       // Ignore storage errors.
     }
   }, [isAuthenticated, currentUser, allowedPages, activeView])
+
+  useEffect(() => {
+    if (!selectedItem?.id) return undefined
+
+    const controller = new AbortController()
+    setAuditHistory([])
+    setAuditHistoryError('')
+    setAuditHistoryLoading(true)
+
+    async function loadAuditHistory() {
+      try {
+        const response = await fetch(
+          `${API_URL}/api/inventory/items/${encodeURIComponent(selectedItem.id)}/audit-history`,
+          { signal: controller.signal },
+        )
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Unable to fetch item audit history')
+        setAuditHistory(data.history || [])
+      } catch (historyError) {
+        if (historyError.name !== 'AbortError') {
+          setAuditHistoryError(historyError.message || 'Unable to fetch item audit history')
+        }
+      } finally {
+        if (!controller.signal.aborted) setAuditHistoryLoading(false)
+      }
+    }
+
+    loadAuditHistory()
+    return () => controller.abort()
+  }, [selectedItem?.id, auditHistoryRevision])
 
   const sidebarPages = [
     { key: 'inventory', label: 'Inventory', icon: Warehouse },
@@ -1158,6 +1192,7 @@ function App() {
       setPhysicalQuantities((current) => ({ ...current, [item.id]: String(data.counted ?? 0) }))
       setResult(data)
       await searchItems('')
+      setAuditHistoryRevision((current) => current + 1)
       if (data.status === 'MATCH') {
         playTone('success')
       } else {
@@ -1739,6 +1774,44 @@ function App() {
                         <span className="text-sm text-slate-600">Current delta</span>
                         <span className="font-semibold text-slate-900">{result ? result.delta : 0}</span>
                       </div>
+                    </div>
+
+                    <div className="mt-5 border-t border-slate-200 pt-4">
+                      <h4 className="mb-3 text-sm font-semibold text-slate-800">Quantity history</h4>
+                      {!selectedItem ? (
+                        <p className="py-4 text-center text-sm text-slate-500">Select an item to view its audit history.</p>
+                      ) : auditHistoryLoading ? (
+                        <p className="py-4 text-center text-sm text-slate-500">Loading audit history...</p>
+                      ) : auditHistoryError ? (
+                        <p role="alert" className="py-4 text-center text-sm text-rose-700">{auditHistoryError}</p>
+                      ) : auditHistory.length ? (
+                        <div className="max-h-64 overflow-auto">
+                          <table className="w-full min-w-[480px] text-left text-xs">
+                            <thead className="sticky top-0 bg-slate-50 text-slate-500">
+                              <tr>
+                                {['System', 'Entered', 'Difference', 'Employee', 'Date'].map((label) => (
+                                  <th key={label} className="border-b border-slate-200 px-2 py-2 font-semibold">{label}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {auditHistory.map((entry) => (
+                                <tr key={entry.id} className="border-b border-slate-100">
+                                  <td className="px-2 py-2 text-slate-700">{entry.systemQuantity}</td>
+                                  <td className="px-2 py-2 font-semibold text-slate-900">{entry.enteredQuantity}</td>
+                                  <td className={`px-2 py-2 font-semibold ${Number(entry.differenceQuantity) ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                    {Number(entry.differenceQuantity) > 0 ? '+' : ''}{entry.differenceQuantity}
+                                  </td>
+                                  <td className="px-2 py-2 text-slate-700" title={entry.employeeId || ''}>{entry.employeeName || entry.employeeId || '—'}</td>
+                                  <td className="whitespace-nowrap px-2 py-2 text-slate-600">{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="py-4 text-center text-sm text-slate-500">No quantity history for this item yet.</p>
+                      )}
                     </div>
                   </div>
                 </section>

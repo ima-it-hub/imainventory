@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   buildOrderDetailSnapshots,
   attachSavedOrderQuantities,
+  orderQuantitiesMatch,
   serializeOrderDetailSnapshots,
 } = require('../src/lib/logistics-order-details');
 
@@ -24,6 +25,23 @@ test('attachSavedOrderQuantities preserves the stable key and saved counts', () 
   assert.deepEqual(attachSavedOrderQuantities([detail], { [detailKey]: 2 }, { [detailKey]: 3 }), [
     { ...detail, detailKey, physicalQuantity: 2, controlQuantity: 3 },
   ]);
+});
+
+test('orderQuantitiesMatch requires every system quantity to match a saved physical quantity', () => {
+  const details = [
+    { Document: 'doc-1', Batch: 'batch-1', Label1: 'Valve', Quantity: 3 },
+    { Document: 'doc-1', Batch: 'batch-2', Label1: 'Pipe', Quantity: '2.5' },
+  ];
+  const matchingCounts = {
+    [JSON.stringify(['doc-1', 'batch-1', 'Valve', '3'])]: '3.0',
+    [JSON.stringify(['doc-1', 'batch-2', 'Pipe', '2.5'])]: 2.5,
+  };
+
+  assert.equal(orderQuantitiesMatch(details, matchingCounts), true);
+  assert.equal(orderQuantitiesMatch(details, { ...matchingCounts, [JSON.stringify(['doc-1', 'batch-1', 'Valve', '3'])]: 2 }), false);
+  assert.equal(orderQuantitiesMatch(details, null), false);
+  assert.equal(orderQuantitiesMatch(details), false);
+  assert.equal(orderQuantitiesMatch([]), false);
 });
 
 test('serializeOrderDetailSnapshots converts ODBC BigInt values to JSON strings', () => {

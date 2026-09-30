@@ -16,6 +16,7 @@ const { computeReconciliation } = require('./src/lib/reconciliation');
 const {
   buildOrderDetailSnapshots,
   attachSavedOrderQuantities,
+  orderQuantitiesMatch,
   serializeOrderDetailSnapshots,
 } = require('./src/lib/logistics-order-details');
 const { initializeDatabase } = require('./src/services/init-db');
@@ -601,6 +602,8 @@ app.get('/api/logistics/orders', async (req, res) => {
         COALESCE(prepared_employee.name, lo.employee_prepared) AS "preparedBy",
         counts.controller_employee_id AS "controllerEmployeeId",
         COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy",
+        order_details.details AS "systemDetails",
+        counts.physical_quantities AS "physicalQuantities",
         lo.driver_id AS "driverId",
         d.name AS "driverName",
         lo.created_at AS "createdAt"
@@ -609,10 +612,15 @@ app.get('/api/logistics/orders', async (req, res) => {
       LEFT JOIN employees prepared_employee ON prepared_employee.employee_id = lo.employee_prepared
       LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
       LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
+      LEFT JOIN logistics_order_details order_details ON order_details.order_number = lo.order_number
       ORDER BY lo.created_at DESC;
     `);
 
-    res.json({ orders: rows, count: rows.length });
+    const orders = rows.map(({ systemDetails, physicalQuantities, ...order }) => ({
+      ...order,
+      quantitiesMatch: orderQuantitiesMatch(systemDetails, physicalQuantities),
+    }));
+    res.json({ orders, count: orders.length });
   } catch (error) {
     console.error('Logistics orders fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch logistics orders', details: error.message });
@@ -1045,6 +1053,37 @@ app.post('/api/inventory/reconcile', async (req, res) => {
   } catch (error) {
     console.error('Reconciliation error:', error);
     res.status(500).json({ error: 'Unable to reconcile inventory', details: error.message });
+  }
+});
+
+app.get('/api/inventory/items/:itemId/audit-history', async (req, res) => {
+  try {
+    const itemId = Number(req.params.itemId);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ error: 'Item id must be a positive integer.' });
+    }
+
+    const history = await query(`
+      SELECT
+        audit.id,
+        audit.expected_qty AS "systemQuantity",
+        audit.counted_qty AS "enteredQuantity",
+        audit.delta_qty AS "differenceQuantity",
+        audit.status,
+        audit.employee_id AS "employeeId",
+        COALESCE(NULLIF(BTRIM(employee.name), ''), audit.employee_id, '—') AS "employeeName",
+        audit.created_at AS "createdAt"
+      FROM audit_history AS audit
+      LEFT JOIN employees AS employee ON employee.employee_id = audit.employee_id
+      WHERE audit.item_id = $1
+      ORDER BY audit.created_at DESC
+      LIMIT 50;
+    `, [itemId]);
+
+    res.json({ history, count: history.length });
+  } catch (error) {
+    console.error('Inventory audit history fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch item audit history', details: error.message });
   }
 });
 

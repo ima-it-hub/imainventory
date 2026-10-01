@@ -135,31 +135,7 @@ function App() {
   })
   const [orders, setOrders] = useState([])
   const [drivers, setDrivers] = useState([])
-  const [deliverySchedule, setDeliverySchedule] = useState(() => {
-    try {
-      const saved = localStorage.getItem(DELIVERY_SCHEDULE_KEY)
-      if (!saved) {
-        return [
-          { id: 1, wilaya: 'Algiers', day: 'Monday', driverId: '1' },
-          { id: 2, wilaya: 'Oran', day: 'Wednesday', driverId: '2' },
-          { id: 3, wilaya: 'Constantine', day: 'Friday', driverId: '3' },
-        ]
-      }
-
-      const parsed = JSON.parse(saved)
-      return Array.isArray(parsed) && parsed.length ? parsed : [
-        { id: 1, wilaya: 'Algiers', day: 'Monday', driverId: '1' },
-        { id: 2, wilaya: 'Oran', day: 'Wednesday', driverId: '2' },
-        { id: 3, wilaya: 'Constantine', day: 'Friday', driverId: '3' },
-      ]
-    } catch {
-      return [
-        { id: 1, wilaya: 'Algiers', day: 'Monday', driverId: '1' },
-        { id: 2, wilaya: 'Oran', day: 'Wednesday', driverId: '2' },
-        { id: 3, wilaya: 'Constantine', day: 'Friday', driverId: '3' },
-      ]
-    }
-  })
+  const [deliverySchedule, setDeliverySchedule] = useState([])
   const [scheduleForm, setScheduleForm] = useState({
     wilaya: '',
     day: 'Monday',
@@ -189,12 +165,68 @@ function App() {
   const qrRef = useRef(null)
 
   useEffect(() => {
-    try {
-      localStorage.setItem(DELIVERY_SCHEDULE_KEY, JSON.stringify(deliverySchedule))
-    } catch {
-      // Ignore storage quota or browser restriction errors.
+    let isMounted = true
+
+    async function loadDeliverySchedule() {
+      try {
+        const response = await fetch(`${API_URL}/api/delivery-schedule`)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Unable to load delivery schedule')
+
+        let routes = data.routes || []
+        if (!routes.length) {
+          let savedRoutes = []
+          try {
+            const saved = localStorage.getItem(DELIVERY_SCHEDULE_KEY)
+            const parsed = saved ? JSON.parse(saved) : []
+            savedRoutes = Array.isArray(parsed) ? parsed : []
+          } catch {
+            savedRoutes = []
+          }
+
+          const migratedRoutes = []
+          for (const route of savedRoutes) {
+            const payload = {
+              wilaya: route.wilaya,
+              day: route.day,
+              driverId: route.driverId || '',
+            }
+            let migrationResponse = await fetch(`${API_URL}/api/delivery-schedule`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            })
+            let routeData = await migrationResponse.json()
+
+            if (!migrationResponse.ok && payload.driverId) {
+              migrationResponse = await fetch(`${API_URL}/api/delivery-schedule`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...payload, driverId: '' }),
+              })
+              routeData = await migrationResponse.json()
+            }
+            if (!migrationResponse.ok) throw new Error(routeData.error || 'Unable to migrate saved delivery routes')
+            migratedRoutes.push(routeData.route)
+          }
+
+          routes = migratedRoutes
+          localStorage.removeItem(DELIVERY_SCHEDULE_KEY)
+        } else {
+          localStorage.removeItem(DELIVERY_SCHEDULE_KEY)
+        }
+
+        if (isMounted) setDeliverySchedule(routes)
+      } catch (scheduleError) {
+        if (isMounted) setError(scheduleError.message || 'Unable to load delivery schedule')
+      }
     }
-  }, [deliverySchedule])
+
+    loadDeliverySchedule()
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(() => {
     try {
@@ -454,7 +486,7 @@ function App() {
     }
   }
 
-  function handleAddDeliverySlot(event) {
+  async function handleAddDeliverySlot(event) {
     event.preventDefault()
 
     if (!scheduleForm.wilaya || !scheduleForm.day) {
@@ -462,22 +494,37 @@ function App() {
       return
     }
 
-    setDeliverySchedule((current) => [
-      ...current,
-      {
-        id: Date.now(),
-        wilaya: scheduleForm.wilaya.trim(),
-        day: scheduleForm.day,
-        driverId: scheduleForm.driverId || '',
-      },
-    ])
-
-    setScheduleForm({ wilaya: '', day: 'Monday', driverId: '' })
     setError('')
+    try {
+      const response = await fetch(`${API_URL}/api/delivery-schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wilaya: scheduleForm.wilaya.trim(),
+          day: scheduleForm.day,
+          driverId: scheduleForm.driverId || '',
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to save delivery route')
+
+      setDeliverySchedule((current) => [...current, data.route])
+      setScheduleForm({ wilaya: '', day: 'Monday', driverId: '' })
+    } catch (scheduleError) {
+      setError(scheduleError.message || 'Unable to save delivery route')
+    }
   }
 
-  function handleDeleteDeliverySlot(id) {
-    setDeliverySchedule((current) => current.filter((route) => route.id !== id))
+  async function handleDeleteDeliverySlot(id) {
+    setError('')
+    try {
+      const response = await fetch(`${API_URL}/api/delivery-schedule/${id}`, { method: 'DELETE' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to delete delivery route')
+      setDeliverySchedule((current) => current.filter((route) => route.id !== id))
+    } catch (scheduleError) {
+      setError(scheduleError.message || 'Unable to delete delivery route')
+    }
   }
 
   async function handleOrderDriverChange(orderId, nextDriverId) {

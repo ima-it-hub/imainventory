@@ -534,6 +534,63 @@ app.get('/api/employees', async (req, res) => {
   }
 });
 
+app.get('/api/delivery-schedule', async (req, res) => {
+  try {
+    const routes = await query(`
+      SELECT id, wilaya, day, COALESCE(driver_id::text, '') AS "driverId"
+      FROM delivery_schedule
+      ORDER BY ARRAY_POSITION(ARRAY['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], day), wilaya, id;
+    `);
+    res.json({ routes, count: routes.length });
+  } catch (error) {
+    console.error('Delivery schedule fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch delivery schedule', details: error.message });
+  }
+});
+
+app.post('/api/delivery-schedule', async (req, res) => {
+  try {
+    const wilaya = String(req.body?.wilaya || '').trim();
+    const day = String(req.body?.day || '').trim();
+    const driverValue = String(req.body?.driverId || '').trim();
+    const driverId = driverValue ? Number(driverValue) : null;
+    const validDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+    if (!wilaya || !validDays.includes(day)) {
+      return res.status(400).json({ error: 'Select a wilaya and a valid day for the delivery route.' });
+    }
+    if (driverId !== null && (!Number.isInteger(driverId) || driverId <= 0)) {
+      return res.status(400).json({ error: 'Select a valid driver.' });
+    }
+
+    const rows = await query(`
+      INSERT INTO delivery_schedule (wilaya, day, driver_id)
+      VALUES ($1, $2, $3)
+      RETURNING id, wilaya, day, COALESCE(driver_id::text, '') AS "driverId";
+    `, [wilaya, day, driverId]);
+    res.status(201).json({ route: rows[0] });
+  } catch (error) {
+    if (error.code === '23503') return res.status(400).json({ error: 'Select an existing driver.' });
+    console.error('Delivery route creation failed:', error);
+    res.status(500).json({ error: 'Unable to save delivery route', details: error.message });
+  }
+});
+
+app.delete('/api/delivery-schedule/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Delivery route id must be a positive integer.' });
+    }
+    const rows = await query('DELETE FROM delivery_schedule WHERE id = $1 RETURNING id;', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Delivery route not found.' });
+    res.json({ deleted: rows[0] });
+  } catch (error) {
+    console.error('Delivery route deletion failed:', error);
+    res.status(500).json({ error: 'Unable to delete delivery route', details: error.message });
+  }
+});
+
 app.get('/api/drivers', async (req, res) => {
   try {
     const drivers = await query('SELECT id, name, phone, region, vehicle, notes, created_at AS "createdAt" FROM drivers ORDER BY name ASC;');

@@ -69,6 +69,16 @@ async function initializeDatabase() {
     );
   `;
 
+  const deliveryScheduleTable = `
+    CREATE TABLE IF NOT EXISTS delivery_schedule (
+      id SERIAL PRIMARY KEY,
+      wilaya VARCHAR(100) NOT NULL,
+      day VARCHAR(20) NOT NULL CHECK (day IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')),
+      driver_id INTEGER REFERENCES drivers(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
   const usersTable = `
     CREATE TABLE IF NOT EXISTS users (
       id SERIAL PRIMARY KEY,
@@ -193,6 +203,7 @@ async function initializeDatabase() {
   await query(auditTable);
   await query(physicalCountsTable);
   await query(driversTable);
+  await query(deliveryScheduleTable);
   await query(usersTable);
   await query(logisticsOrdersTable);
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS ready_at TIMESTAMP;');

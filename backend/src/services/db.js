@@ -2,6 +2,8 @@ const { Pool } = require('pg');
 const config = require('../config');
 const { getStockSnapshot } = require('./odbc');
 
+const SYNC_BATCH_SIZE = 500;
+
 const pool = new Pool({
   connectionString: config.database.postgres.connectionString,
   ssl: { rejectUnauthorized: false },
@@ -32,6 +34,8 @@ function normalizeOdbcItem(row) {
   const quantity = Number(row?.Quantitedepot ?? row?.quantity ?? row?.system_qty ?? 0);
   const warehouseName = String(row?.Depot ?? row?.depot ?? 'Main').trim();
 
+  const unitPrice = Number(row?.PMP ?? row?.price ?? 0);
+
   return {
     source_item_oid: String(sourceId ?? 'unknown'),
     sku: String(sku),
@@ -39,48 +43,54 @@ function normalizeOdbcItem(row) {
     description: `${name} synced from ODBC`,
     barcode: String(barcode),
     current_quantity: Number.isFinite(quantity) ? quantity : 0,
-    unit_price: Number(row?.PMP ?? row?.price ?? 0),
+    unit_price: Number.isFinite(unitPrice) ? unitPrice : 0,
     warehouse_name: warehouseName || 'Main',
   };
 }
 
 async function syncOdbcToSupabase(warehouseFilter = null) {
   const rows = await getStockSnapshot(warehouseFilter);
-  let synced = 0;
+  const itemsByKey = new Map();
 
   for (const row of rows || []) {
     const item = normalizeOdbcItem(row);
-    const sql = `
-      INSERT INTO inventory_items (
-        source_item_oid, sku, name, description, barcode, current_quantity, unit_price, warehouse_name, last_synced_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-      ON CONFLICT (source_item_oid, warehouse_name)
-      DO UPDATE SET
-        sku = EXCLUDED.sku,
-        name = EXCLUDED.name,
-        description = EXCLUDED.description,
-        barcode = EXCLUDED.barcode,
-        current_quantity = EXCLUDED.current_quantity,
-        unit_price = EXCLUDED.unit_price,
-        warehouse_name = EXCLUDED.warehouse_name,
-        last_synced_at = NOW();
-    `;
-
-    await query(sql, [
-      item.source_item_oid,
-      item.sku,
-      item.name,
-      item.description,
-      item.barcode,
-      item.current_quantity,
-      item.unit_price,
-      item.warehouse_name,
-    ]);
-
-    synced += 1;
+    itemsByKey.set(JSON.stringify([item.source_item_oid, item.warehouse_name]), item);
   }
 
-  return synced;
+  const items = Array.from(itemsByKey.values());
+  const sql = `
+    INSERT INTO inventory_items (
+      source_item_oid, sku, name, description, barcode, current_quantity, unit_price, warehouse_name, last_synced_at
+    )
+    SELECT source_item_oid, sku, name, description, barcode, current_quantity, unit_price, warehouse_name, NOW()
+    FROM jsonb_to_recordset($1::jsonb) AS incoming(
+      source_item_oid TEXT,
+      sku TEXT,
+      name TEXT,
+      description TEXT,
+      barcode TEXT,
+      current_quantity INTEGER,
+      unit_price NUMERIC,
+      warehouse_name TEXT
+    )
+    ON CONFLICT (source_item_oid, warehouse_name)
+    DO UPDATE SET
+      sku = EXCLUDED.sku,
+      name = EXCLUDED.name,
+      description = EXCLUDED.description,
+      barcode = EXCLUDED.barcode,
+      current_quantity = EXCLUDED.current_quantity,
+      unit_price = EXCLUDED.unit_price,
+      warehouse_name = EXCLUDED.warehouse_name,
+      last_synced_at = NOW();
+  `;
+
+  for (let offset = 0; offset < items.length; offset += SYNC_BATCH_SIZE) {
+    const batch = items.slice(offset, offset + SYNC_BATCH_SIZE);
+    await query(sql, [JSON.stringify(batch)]);
+  }
+
+  return (rows || []).length;
 }
 
 async function getItemBySearch(queryText, warehouseName = null, mismatchOnly = false) {

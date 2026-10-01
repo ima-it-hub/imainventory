@@ -784,52 +784,56 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
   try {
     const rows = await getLogisticsOrdersFromOdbc();
     const detailRows = await getLogisticsOrderDetailsForSyncFromOdbc();
-    let inserted = 0;
+    const ordersByNumber = new Map();
 
     for (const row of rows || []) {
-      const orderNumber = String(
-        row.Reference ||
-        row.reference ||
-        row.Oid ||
-        row.oid ||
-        ''
-      ).trim();
-
+      const orderNumber = String(row.Reference || row.reference || row.Oid || row.oid || '').trim();
       const customerName = String(
-        row['Label1'] ||
-        row.label1 ||
-        row['ThirdPartyLabel'] ||
-        row.thirdPartyLabel ||
-        row['Customer'] ||
-        row.customer ||
-        'Unknown customer'
+        row['Label1'] || row.label1 || row['ThirdPartyLabel'] || row.thirdPartyLabel || row['Customer'] || row.customer || 'Unknown customer'
       ).trim();
+      const wilaya = String(row['Wilaya'] || row.wilaya || 'Unknown').trim();
 
-      const wilaya = String(
-        row['Wilaya'] ||
-        row.wilaya ||
-        'Unknown'
-      ).trim();
+      if (!orderNumber || !customerName || !wilaya) continue;
 
       const createdValue = row.Date || row.date || row['Date'];
       const createdAt = createdValue ? new Date(createdValue).toISOString() : new Date().toISOString();
+      const existing = ordersByNumber.get(orderNumber);
 
-      if (!orderNumber || !customerName || !wilaya) {
-        continue;
+      if (existing) {
+        existing.wilaya = wilaya;
+      } else {
+        ordersByNumber.set(orderNumber, {
+          order_number: orderNumber,
+          customer_name: customerName,
+          wilaya,
+          created_at: createdAt,
+        });
       }
+    }
 
-      const result = await query(`
-        INSERT INTO logistics_orders (order_number, customer_name, wilaya, status, employee_prepared, driver_id, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (order_number) DO UPDATE
-        SET wilaya = EXCLUDED.wilaya
-        WHERE logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
-        RETURNING id;
-      `, [orderNumber, customerName, wilaya, 'Pending', null, null, createdAt]);
+    const ordersToSync = Array.from(ordersByNumber.values());
+    let inserted = 0;
 
-      if (result.length) {
-        inserted += 1;
-      }
+    const orderBatchSize = 500;
+    const orderUpsertSql = `
+      INSERT INTO logistics_orders (order_number, customer_name, wilaya, status, employee_prepared, driver_id, created_at)
+      SELECT order_number, customer_name, wilaya, 'Pending', NULL, NULL, created_at
+      FROM jsonb_to_recordset($1::jsonb) AS incoming(
+        order_number TEXT,
+        customer_name TEXT,
+        wilaya TEXT,
+        created_at TIMESTAMPTZ
+      )
+      ON CONFLICT (order_number) DO UPDATE
+      SET wilaya = EXCLUDED.wilaya
+      WHERE logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
+      RETURNING id;
+    `;
+
+    for (let offset = 0; offset < ordersToSync.length; offset += orderBatchSize) {
+      const batch = ordersToSync.slice(offset, offset + orderBatchSize);
+      const result = await query(orderUpsertSql, [JSON.stringify(batch)]);
+      inserted += result.length;
     }
 
     const detailSnapshots = buildOrderDetailSnapshots(detailRows);

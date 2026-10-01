@@ -623,6 +623,7 @@ function App() {
           <title>Order Ticket</title>
           <style>
             * { box-sizing: border-box; }
+            @page { size: 100mm 100mm; margin: 1mm; }
             body {
               margin: 0;
               background: #f8fafc;
@@ -633,56 +634,63 @@ function App() {
               color: #0f172a;
             }
             .ticket {
-              width: 360px;
+              width: 98mm;
+              height: 98mm;
               background: #fff;
-              border: 2px solid #dfe7ee;
-              border-radius: 20px;
-              padding: 20px;
+              border: 0.3mm solid #dfe7ee;
+              border-radius: 1mm;
+              padding: 3mm;
               box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+              display: flex;
+              flex-direction: column;
+              justify-content: space-between;
+              overflow: hidden;
             }
             .top {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              gap: 14px;
-              margin-bottom: 18px;
+              gap: 2mm;
+              margin-bottom: 2mm;
             }
             .logo {
-              width: 140px;
-              height: 140px;
+              width: 30mm;
+              height: 30mm;
               object-fit: contain;
-              border-radius: 14px;
+              border-radius: 1mm;
               background: #f8fafc;
-              padding: 4px;
+              padding: 1mm;
             }
             h2 {
               margin: 0;
-              font-size: 17px;
+              font-size: 20px;
             }
             .meta {
-              margin: 10px 0;
-              font-size: 14px;
-              line-height: 1.6;
+              margin: 2mm 0;
+              font-size: 15px;
+              line-height: 1.4;
+              overflow-wrap: anywhere;
             }
             .meta strong {
               display: inline-block;
-              width: 86px;
+              width: 20mm;
               color: #475569;
             }
             .qr-box {
               text-align: center;
-              padding-top: 12px;
+              padding-top: 2mm;
               border-top: 1px solid #e2e8f0;
             }
             .qr-box img {
-              width: 100px;
-              height: 100px;
+              width: 32mm;
+              height: 32mm;
               display: block;
-              margin: 0 auto 10px;
+              margin: 0 auto;
             }
             @media print {
-              body { background: white; }
-              .ticket { box-shadow: none; }
+              html, body { width: 98mm; height: 98mm; }
+              body { display: block; min-height: 0; background: white; }
+              .ticket { width: 98mm; height: 98mm; margin: 0; box-shadow: none; break-inside: avoid; }
             }
           </style>
         </head>

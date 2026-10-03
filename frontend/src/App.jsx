@@ -645,7 +645,7 @@ function App() {
       createdAt: order?.createdAt || '',
     }
 
-    return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(JSON.stringify(payload))}`
+    return `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(JSON.stringify(payload))}`
   }
 
   function handlePrintOrderTicket(order) {
@@ -686,7 +686,7 @@ function App() {
               background: #fff;
               border: 0.3mm solid #dfe7ee;
               border-radius: 1mm;
-              padding: 3mm;
+              padding: 1mm;
               box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
               display: flex;
               flex-direction: column;
@@ -701,8 +701,8 @@ function App() {
               margin-bottom: 2mm;
             }
             .logo {
-              width: 30mm;
-              height: 30mm;
+              width: 24mm;
+              height: 24mm;
               object-fit: contain;
               border-radius: 1mm;
               background: #f8fafc;
@@ -710,27 +710,27 @@ function App() {
             }
             h2 {
               margin: 0;
-              font-size: 20px;
+              font-size: 19px;
             }
             .meta {
-              margin: 2mm 0;
-              font-size: 15px;
-              line-height: 1.4;
+              margin: 1mm 0;
+              font-size: 16px;
+              line-height: 1.25;
               overflow-wrap: anywhere;
             }
             .meta strong {
               display: inline-block;
-              width: 20mm;
+              width: 19mm;
               color: #475569;
             }
             .qr-box {
               text-align: center;
-              padding-top: 2mm;
+              padding-top: 1mm;
               border-top: 1px solid #e2e8f0;
             }
             .qr-box img {
-              width: 32mm;
-              height: 32mm;
+              width: 42mm;
+              height: 42mm;
               display: block;
               margin: 0 auto;
             }
@@ -747,7 +747,7 @@ function App() {
               <img class="logo" src="${safeLogo}" alt="Company logo" />
               <div>
                 <h2>Order ticket</h2>
-                <div style="font-size: 12px; color: #475569;">${safeOrderNumber}</div>
+                <div style="font-size: 15px; font-weight: 600; color: #475569;">${safeOrderNumber}</div>
               </div>
             </div>
             <div class="meta">

@@ -118,18 +118,7 @@ async function getLogisticsOrdersFromOdbc() {
     SELECT
       "d"."Oid",
       "d"."Date",
-      "d"."ThirdParty",
-      "d"."Payment",
-      "d"."DeleteDate",
       "d"."Reference",
-      "d"."WarehouseSource",
-      "d"."Amount",
-      "d"."AmountATI",
-      "d"."Commercial",
-      "d"."Type",
-      "t"."Family",
-      "t"."Department",
-      "t"."AssociatedAgent",
       "t"."Label1",
       "w"."Label1" AS "Wilaya"
     FROM "COM_Document" AS "d"
@@ -163,14 +152,15 @@ async function getLogisticsOrderDetailsForSyncFromOdbc() {
     AND (d."DocumentCategory4" != 9 OR d."DocumentCategory4" IS NULL)
     AND d."WarehouseSource" IN (6, 6)
     AND d."Date" >= '2026-01-01'
-  `);
+  `, true);
 
-  return queryOdbc(sql, [], { fetchSize: 500 });
+  return queryOdbc(sql, [], { fetchSize: 100 });
 }
 
-function getLogisticsOrderDetailsSql(additionalFilters) {
-  return `
-    SELECT
+function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false) {
+  const selectedColumns = syncFieldsOnly
+    ? `d."Oid", d."Reference", dd."Batch", dd."Label1", dd."Quantity", dd."Document"`
+    : `
       d."Oid",
       d."Reference",
       dd."Batch",
@@ -201,7 +191,10 @@ function getLogisticsOrderDetailsSql(additionalFilters) {
         WHEN d."Type" = 4 THEN dd."VWAP"
         WHEN d."Type" = 12 THEN dd."VWAP" * -1
       END) * dd."Quantity") AS "Marg",
-      d."ThirdParty"
+      d."ThirdParty"`;
+
+  return `
+    SELECT ${selectedColumns}
     FROM "COM_Document" AS d
     INNER JOIN "COM_DocumentDetail" AS dd ON d."Oid" = dd."Document"
     WHERE d."Type" IN (4, 4)

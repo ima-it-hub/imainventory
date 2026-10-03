@@ -670,7 +670,7 @@ function App() {
           <title>Order Ticket</title>
           <style>
             * { box-sizing: border-box; }
-            @page { size: 100mm 100mm; margin: 1mm; }
+            @page { size: 100mm 100mm; margin: 0mm; }
             body {
               margin: 0;
               background: #f8fafc;
@@ -681,12 +681,12 @@ function App() {
               color: #0f172a;
             }
             .ticket {
-              width: 98mm;
-              height: 98mm;
+              width: 100mm;
+              height: 100mm;
               background: #fff;
               border: 0.3mm solid #dfe7ee;
-              border-radius: 1mm;
-              padding: 1mm;
+              border-radius: 2mm;
+              padding: 2mm;
               box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
               display: flex;
               flex-direction: column;
@@ -696,48 +696,74 @@ function App() {
             .top {
               display: flex;
               align-items: center;
-              justify-content: space-between;
-              gap: 2mm;
-              margin-bottom: 2mm;
+              justify-content: center;
+              gap: 0;
+              margin-bottom: 0mm;
             }
             .logo {
-              width: 24mm;
-              height: 24mm;
+              width: 40mm;
+              height: 40mm;
               object-fit: contain;
               border-radius: 1mm;
               background: #f8fafc;
-              padding: 1mm;
+              padding: 0mm;
             }
             h2 {
               margin: 0;
-              font-size: 19px;
+              font-size: 24px;
+            }
+            .order-info {
+              min-width: 0;
+              flex: 1;
+            }
+            .order-number {
+              overflow-wrap: anywhere;
+              font-size: 18px;
+              font-weight: 600;
+              color: #475569;
+            }
+            .details-row {
+              display: flex;
+              flex: 1;
+              align-items: center;
+              min-height: 0;
+              gap: 2mm;
+              margin-top: 2mm;
+              border-top: 0.3mm solid #e2e8f0;
             }
             .meta {
-              margin: 1mm 0;
-              font-size: 16px;
-              line-height: 1.25;
-              overflow-wrap: anywhere;
+              flex: 1;
+              min-width: 0;
+              font-size: 17px;
+              line-height: 1.3;
+            }
+            .meta > div {
+              display: grid;
+              grid-template-columns: 20mm minmax(0, 1fr);
+              column-gap: 1mm;
+              align-items: baseline;
+              margin: 0 0 2mm;
             }
             .meta strong {
-              display: inline-block;
-              width: 19mm;
+              display: block;
               color: #475569;
             }
             .qr-box {
+              flex: 0 0 38mm;
               text-align: center;
-              padding-top: 1mm;
-              border-top: 1px solid #e2e8f0;
+              padding-left: 2mm;
+              border-left: 0.3mm solid #e2e8f0;
             }
             .qr-box img {
-              width: 42mm;
-              height: 42mm;
+              width: 35mm;
+              height: 35mm;
               display: block;
               margin: 0 auto;
             }
             @media print {
-              html, body { width: 98mm; height: 98mm; }
+              html, body { width: 100mm; height: 100mm; }
               body { display: block; min-height: 0; background: white; }
-              .ticket { width: 98mm; height: 98mm; margin: 0; box-shadow: none; break-inside: avoid; }
+              .ticket { width: 100mm; height: 100mm; margin: 0; box-shadow: none; break-inside: avoid; }
             }
           </style>
         </head>
@@ -745,19 +771,18 @@ function App() {
           <div class="ticket">
             <div class="top">
               <img class="logo" src="${safeLogo}" alt="Company logo" />
-              <div>
-                <h2>Order ticket</h2>
-                <div style="font-size: 15px; font-weight: 600; color: #475569;">${safeOrderNumber}</div>
+            </div>
+            <div class="details-row">
+              <div class="meta">
+                <div><strong>Order:</strong><span>${safeOrderNumber}</span></div>
+                <div><strong>Client:</strong><span>${safeCustomer}</span></div>
+                <div><strong>Wilaya:</strong><span>${safeWilaya}</span></div>
+                <div><strong>NB.Colis:</strong><span>/</span></div>
+                <div><strong>N.Tel:</strong><span></span></div>
               </div>
-            </div>
-            <div class="meta">
-              <div><strong>Client:</strong> ${safeCustomer}</div>
-              <div><strong>Wilaya:</strong> ${safeWilaya}</div>
-              <div><strong>NB.Colis:</strong> ${"/"}</div>
-              <div><strong>N.Tel:</strong> </div>
-            </div>
-            <div class="qr-box">
-              <img src="${qrImage}" alt="Order QR code" />
+              <div class="qr-box">
+                <img src="${qrImage}" alt="Order QR code" />
+              </div>
             </div>
           </div>
           <script>

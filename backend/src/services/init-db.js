@@ -136,6 +136,29 @@ async function initializeDatabase() {
     );
   `;
 
+  const logisticsTransfersTable = `
+    CREATE TABLE IF NOT EXISTS logistics_transfers (
+      transfer_reference VARCHAR(100) PRIMARY KEY,
+      document_oid VARCHAR(100),
+      document_date TIMESTAMPTZ,
+      warehouse_source_id VARCHAR(100),
+      warehouse_source_name VARCHAR(255),
+      warehouse_destination_id VARCHAR(100),
+      warehouse_destination_name VARCHAR(255),
+      customer_name VARCHAR(255),
+      document_category4 INTEGER,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
+  const logisticsTransferDetailsTable = `
+    CREATE TABLE IF NOT EXISTS logistics_transfer_details (
+      transfer_reference VARCHAR(100) PRIMARY KEY,
+      details JSONB NOT NULL DEFAULT '[]'::jsonb,
+      synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
   const assetCategoriesTable = `
     CREATE TABLE IF NOT EXISTS asset_categories (
       id SERIAL PRIMARY KEY,
@@ -226,6 +249,8 @@ async function initializeDatabase() {
   await query(logisticsOrderPhysicalCountsTable);
   await query(logisticsOrderDetailsTable);
   await query(logisticsTransferStatusesTable);
+  await query(logisticsTransfersTable);
+  await query(logisticsTransferDetailsTable);
   await query(assetCategoriesTable);
   await query(assetPlacesTable);
   await query(assetsTable);

@@ -234,14 +234,7 @@ async function getLogisticsOrderDetailsFromOdbc(identifier) {
   ]);
 }
 
-async function getTransferDetailsFromOdbc(identifier) {
-  return queryOdbc(getLogisticsOrderDetailsSql(`AND (d."Oid"::text = ? OR d."Reference" = ?)`, false, [], 19), [
-    String(identifier),
-    String(identifier),
-  ]);
-}
-
-async function getTransfersFromOdbc(warehouseFilter = null) {
+async function getTransferSyncRowsFromOdbc(warehouseFilter = null) {
   const warehouseCondition = await buildWarehouseFilterSql(warehouseFilter, 'd');
   const sql = `
     SELECT
@@ -253,20 +246,24 @@ async function getTransfersFromOdbc(warehouseFilter = null) {
       "d"."WarehouseDestination" AS "warehouseDestination",
       "destination_wh"."Label1" AS "warehouseDestinationName",
       "t"."Label1" AS "customerName",
-      "d"."DocumentCategory4" AS "documentCategory4"
+      "d"."DocumentCategory4" AS "documentCategory4",
+      "dd"."Batch" AS "Batch",
+      "dd"."Label1" AS "Label1",
+      "dd"."Quantity" AS "Quantity",
+      "dd"."Document" AS "Document"
     FROM "COM_Document" AS "d"
+    LEFT JOIN "COM_DocumentDetail" AS "dd" ON "d"."Oid" = "dd"."Document"
     LEFT JOIN "COM_Warehouse" AS "source_wh" ON "d"."WarehouseSource" = "source_wh"."Oid"
     LEFT JOIN "COM_Warehouse" AS "destination_wh" ON "d"."WarehouseDestination" = "destination_wh"."Oid"
     LEFT JOIN "COM_ThirdParty" AS "t" ON "d"."ThirdParty" = "t"."Oid"
-    WHERE "d"."Type" IN (19, 19)
+    WHERE "d"."Type" = 19
       AND "d"."DeleteDate" IS NULL
       AND ("d"."DocumentCategory4" != 9 OR "d"."DocumentCategory4" IS NULL)
       ${warehouseCondition.sql || ''}
       AND "d"."Date" >= '2026-01-01'
-    ORDER BY "d"."Date" DESC;
   `;
 
-  return queryOdbc(sql, warehouseCondition.params);
+  return queryOdbc(sql, warehouseCondition.params, { fetchSize: 1000 });
 }
 
 async function getLogisticsOrderDetailsForSyncFromOdbc(warehouseFilter = null) {
@@ -333,9 +330,8 @@ module.exports = {
   resolveWarehouseFilter,
   buildWarehouseFilterSql,
   getLogisticsOrdersFromOdbc,
-  getTransfersFromOdbc,
+  getTransferSyncRowsFromOdbc,
   getLogisticsOrderDetailsFromOdbc,
-  getTransferDetailsFromOdbc,
   getLogisticsOrderDetailsForSyncFromOdbc,
   getConnection,
 };

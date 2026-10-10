@@ -10,8 +10,7 @@ const {
 const {
   getStockSnapshot,
   getLogisticsOrdersFromOdbc,
-  getTransfersFromOdbc,
-  getTransferDetailsFromOdbc,
+  getTransferSyncRowsFromOdbc,
   getLogisticsOrderDetailsForSyncFromOdbc,
   normalizeWarehouseFilter,
 } = require('./src/services/odbc');
@@ -40,6 +39,10 @@ app.use(express.json({ limit: '1mb' }));
 function normalizeJsonValue(value) {
   if (typeof value === 'bigint') {
     return value.toString();
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
   }
 
   if (Array.isArray(value)) {
@@ -124,51 +127,17 @@ app.get('/api/odbc/stock', async (req, res) => {
 app.get('/api/warehouses', async (req, res) => {
   try {
     const rows = await query('SELECT DISTINCT TRIM(warehouse_name) AS warehouse_name FROM inventory_items WHERE warehouse_name IS NOT NULL ORDER BY TRIM(warehouse_name) ASC;');
-    const warehouses = (rows || []).map((row) => String(row.warehouse_name).trim()).filter(Boolean);
+    const warehouses = rows.map((row) => row.warehouse_name).filter(Boolean);
     res.json({ warehouses, count: warehouses.length });
   } catch (error) {
     console.error('Warehouses fetch failed:', error);
-    res.status(500).json({ error: 'Unable to fetch warehouse list', details: error.message });
-  }
-});
-
-app.get('/api/assets', async (req, res) => {
-  try {
-    const rows = await query(`
-      SELECT
-        a.id,
-        a.name,
-        a.category_id AS "categoryId",
-        c.name AS "categoryName",
-        a.quantity,
-        a.place_id AS "placeId",
-        p.name AS "placeName",
-        a.purchase_value AS "purchaseValue",
-        a.current_value AS "currentValue",
-        a.repair_status AS "repairStatus",
-        a.created_at AS "createdAt",
-        a.updated_at AS "updatedAt"
-      FROM assets a
-      JOIN asset_categories c ON c.id = a.category_id
-      JOIN asset_places p ON p.id = a.place_id
-      ORDER BY a.name ASC, a.id ASC;
-    `);
-    res.json({ assets: rows, count: rows.length });
-  } catch (error) {
-    console.error('Assets fetch failed:', error);
-    res.status(500).json({ error: 'Unable to fetch assets', details: error.message });
+    res.status(500).json({ error: 'Unable to fetch warehouses', details: error.message });
   }
 });
 
 app.get('/api/asset-categories', async (_req, res) => {
   try {
-    const categories = await query(`
-      SELECT c.id, c.name, COUNT(a.id)::integer AS "assetCount"
-      FROM asset_categories c
-      LEFT JOIN assets a ON a.category_id = c.id
-      GROUP BY c.id
-      ORDER BY c.name ASC;
-    `);
+    const categories = await query('SELECT id, name FROM asset_categories ORDER BY name ASC;');
     res.json({ categories, count: categories.length });
   } catch (error) {
     console.error('Asset categories fetch failed:', error);
@@ -741,41 +710,35 @@ app.get('/api/logistics/orders', async (req, res) => {
 app.get('/api/logistics/transfers', async (req, res) => {
   try {
     const warehouse = String(req.query.warehouse || '').trim();
-    const rows = await getTransfersFromOdbc(warehouse || null);
-    const transferRows = (rows || []).map((row) => ({
-      id: row.id ?? row.oid ?? row.Reference ?? row.reference,
-      reference: row.reference ?? row.Reference ?? null,
-      date: row.date ?? row.Date ?? null,
-      warehouseSource: row.warehouseSource ?? row.WarehouseSource ?? null,
-      warehouseSourceName: row.warehouseSourceName ?? row.WarehouseSourceName ?? null,
-      warehouseDestination: row.warehouseDestination ?? row.WarehouseDestination ?? null,
-      warehouseDestinationName: row.warehouseDestinationName ?? row.WarehouseDestinationName ?? null,
-      customerName: row.customerName ?? row.CustomerName ?? row['Label1'] ?? row.label1 ?? null,
-      documentCategory4: row.documentCategory4 ?? row.DocumentCategory4 ?? 19,
-    }));
-    const references = transferRows.map((transfer) => transfer.reference).filter(Boolean);
-    const savedStatuses = references.length
-      ? await query('SELECT transfer_reference AS "transferReference", status FROM logistics_transfer_statuses WHERE transfer_reference = ANY($1::text[])', [references])
-      : [];
-    const savedEmployees = references.length
-      ? await query(`
-        SELECT
-          counts.order_number AS "transferReference",
-          COALESCE(prepared_employee.name, counts.employee_prepared_id) AS "preparedBy",
-          COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy"
-        FROM logistics_order_physical_counts counts
-        LEFT JOIN employees prepared_employee ON prepared_employee.employee_id = counts.employee_prepared_id
-        LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
-        WHERE counts.order_number = ANY($1::text[])
-      `, [references])
-      : [];
-    const statusByReference = new Map(savedStatuses.map((row) => [row.transferReference, row.status]));
-    const employeesByReference = new Map(savedEmployees.map((row) => [row.transferReference, row]));
-    const transfers = transferRows.map((transfer) => ({
-      ...transfer,
-      status: statusByReference.get(transfer.reference) || 'Pending',
-      preparedBy: employeesByReference.get(transfer.reference)?.preparedBy || null,
-      controlledBy: employeesByReference.get(transfer.reference)?.controlledBy || null,
+    const rows = await query(`
+      SELECT
+        transfer.transfer_reference AS "reference",
+        transfer.document_oid AS "id",
+        transfer.document_date AS "date",
+        transfer.warehouse_source_id AS "warehouseSource",
+        transfer.warehouse_source_name AS "warehouseSourceName",
+        transfer.warehouse_destination_id AS "warehouseDestination",
+        transfer.warehouse_destination_name AS "warehouseDestinationName",
+        transfer.customer_name AS "customerName",
+        transfer.document_category4 AS "documentCategory4",
+        COALESCE(status.status, 'Pending') AS "status",
+        COALESCE(prepared_employee.name, counts.employee_prepared_id) AS "preparedBy",
+        COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy"
+      FROM logistics_transfers transfer
+      LEFT JOIN logistics_transfer_statuses status ON status.transfer_reference = transfer.transfer_reference
+      LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = transfer.transfer_reference
+      LEFT JOIN employees prepared_employee ON prepared_employee.employee_id = counts.employee_prepared_id
+      LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
+      WHERE ($1::text IS NULL
+        OR LOWER(TRIM(COALESCE(transfer.warehouse_source_name, ''))) = LOWER(TRIM($1))
+        OR COALESCE(transfer.warehouse_source_id, '') = $1)
+      ORDER BY transfer.document_date DESC NULLS LAST, transfer.transfer_reference DESC;
+    `, [warehouse || null]);
+
+    const transfers = rows.map((row) => ({
+      ...row,
+      sourceWarehouse: row.warehouseSourceName || row.warehouseSource || '—',
+      destinationWarehouse: row.warehouseDestinationName || row.warehouseDestination || '—',
     }));
 
     const payload = normalizeJsonValue({ transfers, count: transfers.length, warehouse: warehouse || null });
@@ -783,6 +746,107 @@ app.get('/api/logistics/transfers', async (req, res) => {
   } catch (error) {
     console.error('Logistics transfers fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch transfer records', details: error.message });
+  }
+});
+
+app.post('/api/logistics/transfers/sync-odbc', async (req, res) => {
+  try {
+    const warehouse = String(req.body?.warehouse || req.query?.warehouse || '').trim();
+    const rows = await getTransferSyncRowsFromOdbc(warehouse || null);
+    const detailRows = rows.filter((row) => row.Document !== null && row.Document !== undefined);
+    const transfersByReference = new Map();
+
+    for (const row of rows || []) {
+      const documentOid = String(row.id ?? row.oid ?? row.Oid ?? '').trim();
+      const reference = String(row.reference ?? row.Reference ?? documentOid).trim();
+      if (!reference) continue;
+
+      const rawDate = row.date ?? row.Date ?? null;
+      const documentDate = rawDate ? new Date(rawDate) : null;
+      const documentCategory4 = Number(row.documentCategory4 ?? row.DocumentCategory4 ?? 19);
+      transfersByReference.set(reference, {
+        transfer_reference: reference,
+        document_oid: documentOid || null,
+        document_date: documentDate && Number.isFinite(documentDate.getTime()) ? documentDate.toISOString() : null,
+        warehouse_source_id: String(row.warehouseSource ?? row.WarehouseSource ?? '').trim() || null,
+        warehouse_source_name: String(row.warehouseSourceName ?? row.WarehouseSourceName ?? '').trim() || null,
+        warehouse_destination_id: String(row.warehouseDestination ?? row.WarehouseDestination ?? '').trim() || null,
+        warehouse_destination_name: String(row.warehouseDestinationName ?? row.WarehouseDestinationName ?? '').trim() || null,
+        customer_name: String(row.customerName ?? row.CustomerName ?? row.Label1 ?? row.label1 ?? '').trim() || null,
+        document_category4: Number.isFinite(documentCategory4) ? documentCategory4 : null,
+      });
+    }
+
+    const transferRecords = Array.from(transfersByReference.values());
+    const transferBatchSize = 500;
+    for (let offset = 0; offset < transferRecords.length; offset += transferBatchSize) {
+      const batch = transferRecords.slice(offset, offset + transferBatchSize);
+      await query(`
+        INSERT INTO logistics_transfers (
+          transfer_reference, document_oid, document_date,
+          warehouse_source_id, warehouse_source_name,
+          warehouse_destination_id, warehouse_destination_name,
+          customer_name, document_category4, synced_at
+        )
+        SELECT
+          transfer_reference, document_oid, document_date,
+          warehouse_source_id, warehouse_source_name,
+          warehouse_destination_id, warehouse_destination_name,
+          customer_name, document_category4, NOW()
+        FROM jsonb_to_recordset($1::jsonb) AS incoming(
+          transfer_reference TEXT, document_oid TEXT, document_date TIMESTAMPTZ,
+          warehouse_source_id TEXT, warehouse_source_name TEXT,
+          warehouse_destination_id TEXT, warehouse_destination_name TEXT,
+          customer_name TEXT, document_category4 INTEGER
+        )
+        ON CONFLICT (transfer_reference) DO UPDATE SET
+          document_oid = EXCLUDED.document_oid,
+          document_date = EXCLUDED.document_date,
+          warehouse_source_id = EXCLUDED.warehouse_source_id,
+          warehouse_source_name = EXCLUDED.warehouse_source_name,
+          warehouse_destination_id = EXCLUDED.warehouse_destination_id,
+          warehouse_destination_name = EXCLUDED.warehouse_destination_name,
+          customer_name = EXCLUDED.customer_name,
+          document_category4 = EXCLUDED.document_category4,
+          synced_at = NOW()
+        WHERE logistics_transfers.document_oid IS DISTINCT FROM EXCLUDED.document_oid
+          OR logistics_transfers.document_date IS DISTINCT FROM EXCLUDED.document_date
+          OR logistics_transfers.warehouse_source_id IS DISTINCT FROM EXCLUDED.warehouse_source_id
+          OR logistics_transfers.warehouse_source_name IS DISTINCT FROM EXCLUDED.warehouse_source_name
+          OR logistics_transfers.warehouse_destination_id IS DISTINCT FROM EXCLUDED.warehouse_destination_id
+          OR logistics_transfers.warehouse_destination_name IS DISTINCT FROM EXCLUDED.warehouse_destination_name
+          OR logistics_transfers.customer_name IS DISTINCT FROM EXCLUDED.customer_name
+          OR logistics_transfers.document_category4 IS DISTINCT FROM EXCLUDED.document_category4;
+      `, [JSON.stringify(batch)]);
+    }
+
+    const detailSnapshots = buildOrderDetailSnapshots(detailRows);
+    const detailBatchSize = 200;
+    for (let offset = 0; offset < detailSnapshots.length; offset += detailBatchSize) {
+      const batch = detailSnapshots.slice(offset, offset + detailBatchSize);
+      const serializedSnapshots = JSON.stringify(
+        batch.map(({ orderNumber, details }) => ({ transfer_reference: orderNumber, details })),
+        (_key, value) => typeof value === 'bigint' ? value.toString() : value,
+      );
+      await query(`
+        INSERT INTO logistics_transfer_details (transfer_reference, details, synced_at)
+        SELECT transfer_reference, details, NOW()
+        FROM jsonb_to_recordset($1::jsonb) AS snapshots(transfer_reference TEXT, details JSONB)
+        ON CONFLICT (transfer_reference) DO UPDATE
+        SET details = EXCLUDED.details, synced_at = EXCLUDED.synced_at
+        WHERE logistics_transfer_details.details IS DISTINCT FROM EXCLUDED.details;
+      `, [serializedSnapshots]);
+    }
+
+    res.json({
+      ok: true,
+      synced: transferRecords.length,
+      detailsSynced: detailSnapshots.length,
+      warehouse: warehouse || null,
+    });
+  } catch (error) {
+    console.error('Logistics transfer sync failed:', error);
+    res.status(500).json({ error: 'Unable to sync transfers from ODBC', details: error.message });
   }
 });
 
@@ -838,14 +902,14 @@ app.get('/api/logistics/transfers/:reference/details', async (req, res) => {
   try {
     const transferReference = String(req.params.reference);
     const [detailRows, savedRows] = await Promise.all([
-      getTransferDetailsFromOdbc(transferReference),
+      query('SELECT details FROM logistics_transfer_details WHERE transfer_reference = $1', [transferReference]),
       query('SELECT physical_quantities, control_quantities FROM logistics_order_physical_counts WHERE order_number = $1', [transferReference]),
     ]);
 
     const savedQuantities = savedRows[0]?.physical_quantities || {};
     const savedControlQuantities = savedRows[0]?.control_quantities || {};
     const details = attachSavedOrderQuantities(
-      detailRows || [],
+      detailRows[0]?.details || [],
       savedQuantities,
       savedControlQuantities,
     );

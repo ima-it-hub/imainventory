@@ -99,6 +99,7 @@ function App() {
   const [qrScanScannerReady, setQrScanScannerReady] = useState(false)
   const [syncingItems, setSyncingItems] = useState(false)
   const [syncingOrders, setSyncingOrders] = useState(false)
+  const [syncingTransfers, setSyncingTransfers] = useState(false)
   const [warehouses, setWarehouses] = useState([])
   const [selectedWarehouse, setSelectedWarehouse] = useState('')
   const [employees, setEmployees] = useState([])
@@ -314,7 +315,7 @@ function App() {
     if (!dateValue) return '—'
 
     const date = new Date(dateValue)
-    if (Number.isNaN(date.getTime())) return dateValue
+    if (Number.isNaN(date.getTime())) return '—'
 
     return date.toLocaleString([], {
       year: 'numeric',
@@ -1231,6 +1232,27 @@ function App() {
     }
   }
 
+  async function handleSyncTransfersFromOdbc() {
+    setSyncingTransfers(true)
+    setError('')
+
+    try {
+      const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim() || null
+      const response = await fetch(`${API_URL}/api/logistics/transfers/sync-odbc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ warehouse }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to sync transfers')
+      await loadTransfers()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSyncingTransfers(false)
+    }
+  }
+
   async function handleFetchOrderDetails(order) {
     const identifier = order.orderNumber || order.id
     const response = await fetch(`${API_URL}/api/logistics/orders/${encodeURIComponent(identifier)}/details`)
@@ -1723,10 +1745,11 @@ function App() {
                   ) : activeView === 'transfer' ? (
                     <button
                       type="button"
-                      onClick={loadTransfers}
+                      onClick={handleSyncTransfersFromOdbc}
+                      disabled={syncingTransfers}
                       className="rounded-xl bg-[#1ecf9b] px-4 py-3 text-sm font-semibold text-[#0d1a2d] shadow-sm transition hover:bg-[#19b88e] disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Refresh transfers
+                      {syncingTransfers ? 'Syncing transfers...' : 'Sync transfers'}
                     </button>
                   ) : null}
                 </div>

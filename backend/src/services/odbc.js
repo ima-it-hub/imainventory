@@ -73,6 +73,95 @@ async function queryOdbc(sql, params = [], options = {}) {
   });
 }
 
+function normalizeWarehouseFilter(warehouseFilter = null) {
+  if (warehouseFilter === null || warehouseFilter === undefined) {
+    return null;
+  }
+
+  const value = String(warehouseFilter).trim();
+  if (!value) {
+    return null;
+  }
+
+  if (/^\d+$/.test(value)) {
+    return { id: Number(value), name: null };
+  }
+
+  return { id: null, name: value };
+}
+
+async function resolveWarehouseFilter(warehouseFilter = null) {
+  const normalized = normalizeWarehouseFilter(warehouseFilter);
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.id !== null) {
+    return { ...normalized, value: Number(normalized.id) };
+  }
+
+  const rows = await queryOdbc(
+    'SELECT "Oid" AS "WarehouseId" FROM "COM_Warehouse" WHERE "Label1" ILIKE ? ORDER BY "Oid" ASC LIMIT 20;',
+    [`%${normalized.name}%`],
+  );
+
+  const ids = (rows || []).map((row) => Number(row?.WarehouseId ?? row?.warehouseid ?? row?.Oid ?? row?.oid)).filter(Number.isFinite);
+  if (!ids.length) {
+    return null;
+  }
+
+  return { id: ids[0], name: normalized.name, values: ids };
+}
+
+async function buildWarehouseFilterSql(warehouseFilter = null, sourceAlias = 'd', detailAlias = null) {
+  const normalized = normalizeWarehouseFilter(warehouseFilter);
+  if (!normalized) {
+    return { sql: '', params: [] };
+  }
+
+  const hasDetailAlias = typeof detailAlias === 'string' && detailAlias.trim().length > 0;
+
+  if (!hasDetailAlias || sourceAlias === detailAlias) {
+    if (normalized.id !== null) {
+      return {
+        sql: `AND ${sourceAlias}."WarehouseSource" = ?`,
+        params: [normalized.id],
+      };
+    }
+
+    const resolved = await resolveWarehouseFilter(warehouseFilter);
+    if (!resolved || !Array.isArray(resolved.values) || !resolved.values.length) {
+      return { sql: 'AND 1 = 0', params: [] };
+    }
+
+    const ids = resolved.values;
+    const placeholders = ids.map(() => '?').join(', ');
+    return {
+      sql: `AND ${sourceAlias}."WarehouseSource" IN (${placeholders})`,
+      params: [...ids],
+    };
+  }
+
+  if (normalized.id !== null) {
+    return {
+      sql: `AND ${sourceAlias}."WarehouseSource" = ? AND ${detailAlias}."Warehouse" = ?`,
+      params: [normalized.id, normalized.id],
+    };
+  }
+
+  const resolved = await resolveWarehouseFilter(warehouseFilter);
+  if (!resolved || !Array.isArray(resolved.values) || !resolved.values.length) {
+    return { sql: 'AND 1 = 0', params: [] };
+  }
+
+  const ids = resolved.values;
+  const placeholders = ids.map(() => '?').join(', ');
+  return {
+    sql: `AND ${sourceAlias}."WarehouseSource" IN (${placeholders}) AND ${detailAlias}."Warehouse" IN (${placeholders})`,
+    params: [...ids, ...ids],
+  };
+}
+
 async function getStockSnapshot(warehouseFilter = null) {
   const filters = [];
   const params = [];
@@ -113,51 +202,85 @@ async function getStockSnapshot(warehouseFilter = null) {
   return queryOdbc(sql, params);
 }
 
-async function getLogisticsOrdersFromOdbc() {
+async function getLogisticsOrdersFromOdbc(warehouseFilter = null) {
+  const warehouseCondition = await buildWarehouseFilterSql(warehouseFilter, 'd');
   const sql = `
     SELECT
       "d"."Oid",
       "d"."Date",
       "d"."Reference",
       "t"."Label1",
+      "d"."WarehouseSource" AS "WarehouseSource",
+      "cw"."Label1" AS "WarehouseName",
       "w"."Label1" AS "Wilaya"
     FROM "COM_Document" AS "d"
     INNER JOIN "COM_ThirdParty" AS "t" ON "d"."ThirdParty" = "t"."Oid"
+    LEFT JOIN "COM_Warehouse" AS "cw" ON "d"."WarehouseSource" = "cw"."Oid"
     LEFT JOIN "STD_Department" AS "w" ON "t"."Department" = "w"."Oid"
     WHERE "d"."Type" IN (4, 4)
       AND "d"."DeleteDate" IS NULL
       AND ("d"."DocumentCategory4" != 9 OR "d"."DocumentCategory4" IS NULL)
-      AND "d"."WarehouseSource" IN (6, 6)
-      AND "d"."Date" >= '2026-01-01'
-      AND EXISTS (
-        SELECT 1
-        FROM "COM_DocumentDetail" AS "dd"
-        WHERE "dd"."Document" = "d"."Oid"
-          AND "dd"."Warehouse" = 6
-      );
+      ${warehouseCondition.sql || ''}
+      AND "d"."Date" >= '2026-01-01';
   `;
 
-  return queryOdbc(sql);
+  return queryOdbc(sql, warehouseCondition.params);
 }
 
 async function getLogisticsOrderDetailsFromOdbc(identifier) {
-  return queryOdbc(getLogisticsOrderDetailsSql(`AND (d."Oid"::text = ? OR d."Reference" = ?)`), [
+  return queryOdbc(getLogisticsOrderDetailsSql(`AND (d."Oid"::text = ? OR d."Reference" = ?)`, false, [], 4), [
     String(identifier),
     String(identifier),
   ]);
 }
 
-async function getLogisticsOrderDetailsForSyncFromOdbc() {
-  const sql = getLogisticsOrderDetailsSql(`
-    AND (d."DocumentCategory4" != 9 OR d."DocumentCategory4" IS NULL)
-    AND d."WarehouseSource" IN (6, 6)
-    AND d."Date" >= '2026-01-01'
-  `, true);
-
-  return queryOdbc(sql, [], { fetchSize: 100 });
+async function getTransferDetailsFromOdbc(identifier) {
+  return queryOdbc(getLogisticsOrderDetailsSql(`AND (d."Oid"::text = ? OR d."Reference" = ?)`, false, [], 19), [
+    String(identifier),
+    String(identifier),
+  ]);
 }
 
-function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false) {
+async function getTransfersFromOdbc(warehouseFilter = null) {
+  const warehouseCondition = await buildWarehouseFilterSql(warehouseFilter, 'd');
+  const sql = `
+    SELECT
+      "d"."Oid" AS "id",
+      "d"."Date" AS "date",
+      "d"."Reference" AS "reference",
+      "d"."WarehouseSource" AS "warehouseSource",
+      "source_wh"."Label1" AS "warehouseSourceName",
+      "d"."WarehouseDestination" AS "warehouseDestination",
+      "destination_wh"."Label1" AS "warehouseDestinationName",
+      "t"."Label1" AS "customerName",
+      "d"."DocumentCategory4" AS "documentCategory4"
+    FROM "COM_Document" AS "d"
+    LEFT JOIN "COM_Warehouse" AS "source_wh" ON "d"."WarehouseSource" = "source_wh"."Oid"
+    LEFT JOIN "COM_Warehouse" AS "destination_wh" ON "d"."WarehouseDestination" = "destination_wh"."Oid"
+    LEFT JOIN "COM_ThirdParty" AS "t" ON "d"."ThirdParty" = "t"."Oid"
+    WHERE "d"."Type" IN (19, 19)
+      AND "d"."DeleteDate" IS NULL
+      AND ("d"."DocumentCategory4" != 9 OR "d"."DocumentCategory4" IS NULL)
+      ${warehouseCondition.sql || ''}
+      AND "d"."Date" >= '2026-01-01'
+    ORDER BY "d"."Date" DESC;
+  `;
+
+  return queryOdbc(sql, warehouseCondition.params);
+}
+
+async function getLogisticsOrderDetailsForSyncFromOdbc(warehouseFilter = null) {
+  const warehouseCondition = await buildWarehouseFilterSql(warehouseFilter, 'd', 'dd');
+  const sql = getLogisticsOrderDetailsSql(`
+    AND (d."DocumentCategory4" != 9 OR d."DocumentCategory4" IS NULL)
+    ${warehouseCondition.sql || ''}
+    AND d."Date" >= '2026-01-01'
+  `, true, warehouseCondition.params);
+
+  return queryOdbc(sql, warehouseCondition.params, { fetchSize: 100 });
+}
+
+function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false, warehouseParams = [], documentType = 4) {
   const selectedColumns = syncFieldsOnly
     ? `d."Oid", d."Reference", dd."Batch", dd."Label1", dd."Quantity", dd."Document"`
     : `
@@ -197,9 +320,8 @@ function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false) 
     SELECT ${selectedColumns}
     FROM "COM_Document" AS d
     INNER JOIN "COM_DocumentDetail" AS dd ON d."Oid" = dd."Document"
-    WHERE d."Type" IN (4, 4)
+    WHERE d."Type" IN (${documentType}, ${documentType})
       AND d."DeleteDate" IS NULL
-      AND dd."Warehouse" = 6
       ${additionalFilters};
   `;
 }
@@ -207,8 +329,13 @@ function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false) 
 module.exports = {
   queryOdbc,
   getStockSnapshot,
+  normalizeWarehouseFilter,
+  resolveWarehouseFilter,
+  buildWarehouseFilterSql,
   getLogisticsOrdersFromOdbc,
+  getTransfersFromOdbc,
   getLogisticsOrderDetailsFromOdbc,
+  getTransferDetailsFromOdbc,
   getLogisticsOrderDetailsForSyncFromOdbc,
   getConnection,
 };

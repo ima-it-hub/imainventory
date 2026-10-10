@@ -5,8 +5,11 @@ import {
   CalendarRange,
   Camera,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Clock3,
+  Eye,
   KeyRound,
   Menu,
   PackageSearch,
@@ -34,6 +37,7 @@ const DELIVERY_SCHEDULE_KEY = 'inventory-delivery-schedule'
 const AUTH_SESSION_KEY = 'inventory-auth-session'
 
 const logisticsStatuses = ['Pending', 'Packing', 'Ready', 'Delivered']
+const TRANSFER_PAGE_SIZE = 50
 
 const initialOrders = [
   {
@@ -126,14 +130,22 @@ function App() {
   const [allowedPages, setAllowedPages] = useState(() => {
     try {
       const saved = localStorage.getItem(AUTH_SESSION_KEY)
-      if (!saved) return ['inventory', 'logistics', 'drivers', 'schedule']
+      if (!saved) return ['inventory', 'logistics', 'transfer', 'drivers', 'schedule']
       const parsed = JSON.parse(saved)
-      return Array.isArray(parsed?.allowedPages) && parsed.allowedPages.length ? parsed.allowedPages : ['inventory', 'logistics', 'drivers', 'schedule']
+      return Array.isArray(parsed?.allowedPages) && parsed.allowedPages.length ? parsed.allowedPages : ['inventory', 'logistics', 'transfer', 'drivers', 'schedule']
     } catch {
-      return ['inventory', 'logistics', 'drivers', 'schedule']
+      return ['inventory', 'logistics', 'transfer', 'drivers', 'schedule']
     }
   })
   const [orders, setOrders] = useState([])
+  const [transfers, setTransfers] = useState([])
+  const [transferToView, setTransferToView] = useState(null)
+  const [transferDetails, setTransferDetails] = useState([])
+  const [transferDetailsLoading, setTransferDetailsLoading] = useState(false)
+  const [transferDetailsError, setTransferDetailsError] = useState('')
+  const [transferPhysicalQuantities, setTransferPhysicalQuantities] = useState({})
+  const [transferControlQuantities, setTransferControlQuantities] = useState({})
+  const [transferSaved, setTransferSaved] = useState(false)
   const [drivers, setDrivers] = useState([])
   const [deliverySchedule, setDeliverySchedule] = useState([])
   const [scheduleForm, setScheduleForm] = useState({
@@ -151,6 +163,9 @@ function App() {
   const [orderSearch, setOrderSearch] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState('All')
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState('All')
+  const [transferSearch, setTransferSearch] = useState('')
+  const [transferStatusFilter, setTransferStatusFilter] = useState('All')
+  const [transferPage, setTransferPage] = useState(1)
   const [driverSearch, setDriverSearch] = useState('')
   const [orderForm, setOrderForm] = useState({
     orderNumber: '',
@@ -279,6 +294,7 @@ function App() {
     { key: 'inventory', label: 'Inventory', icon: Warehouse },
     { key: 'qr-scan', label: 'QR scan', icon: QrCode },
     { key: 'logistics', label: 'Logistics', icon: Truck },
+    { key: 'transfer', label: 'Transfer', icon: PackageSearch },
     { key: 'drivers', label: 'Drivers', icon: UserRound },
     { key: 'schedule', label: 'Delivery plan', icon: CalendarRange },
     { key: 'assets', label: 'Assets', icon: Boxes },
@@ -416,6 +432,44 @@ function App() {
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  async function handleTransferStatusChange(transferReference, nextStatus) {
+    try {
+      const response = await fetch(`${API_URL}/api/logistics/transfers/${encodeURIComponent(transferReference)}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to update transfer status')
+
+      setTransfers((current) => current.map((transfer) => (
+        transfer.reference === transferReference ? { ...transfer, status: data.transfer.status } : transfer
+      )))
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleFetchTransferDetails(transfer) {
+    const identifier = transfer.reference || transfer.id
+    const response = await fetch(`${API_URL}/api/logistics/transfers/${encodeURIComponent(identifier)}/details`)
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Unable to fetch transfer details')
+    return data.details || []
+  }
+
+  async function handleSaveTransferPhysicalQuantities(transfer, physicalQuantities, controlQuantities, employeePrepared, controllerEmployeeId) {
+    const identifier = transfer.reference || transfer.id
+    const response = await fetch(`${API_URL}/api/logistics/transfers/${encodeURIComponent(identifier)}/physical-counts`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ physicalQuantities, controlQuantities, employeePrepared, controllerEmployeeId }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Unable to save transfer physical quantities')
+    return data
   }
 
   async function handleDeleteOrder(orderId) {
@@ -985,6 +1039,9 @@ function App() {
       const nextUser = data.user
       setCurrentUser(nextUser)
       setAllowedPages(nextUser.allowedPages || [])
+      if (nextUser.workingWarehouse) {
+        setSelectedWarehouse((current) => String(current || '').trim() || nextUser.workingWarehouse)
+      }
       setIsAuthenticated(true)
       setActiveView(nextUser.role === 'admin' ? 'inventory' : nextUser.allowedPages?.[0] || 'inventory')
       await loadUsers()
@@ -1023,6 +1080,9 @@ function App() {
       if (currentUser && currentUser.id === userId) {
         setCurrentUser(data.user)
         setAllowedPages(data.user.allowedPages || [])
+        if (data.user.workingWarehouse) {
+          setSelectedWarehouse((current) => String(current || '').trim() || data.user.workingWarehouse)
+        }
       }
 
       await loadUsers()
@@ -1053,12 +1113,20 @@ function App() {
         if (!response.ok) throw new Error(data.error || 'Unable to load warehouses')
 
         const list = (data.warehouses || ['Main warehouse']).map((value) => String(value).trim()).filter(Boolean)
+        const preferredWarehouse = String(currentUser?.workingWarehouse || '').trim() || list[0] || ''
         setWarehouses(list)
-        setSelectedWarehouse((current) => String(current || '').trim() || list[0])
+        setSelectedWarehouse((current) => {
+          const currentValue = String(current || '').trim()
+          return currentValue || preferredWarehouse
+        })
       } catch (err) {
         const fallback = ['Main warehouse']
+        const preferredWarehouse = String(currentUser?.workingWarehouse || '').trim() || fallback[0] || ''
         setWarehouses(fallback)
-        setSelectedWarehouse((current) => String(current || '').trim() || fallback[0])
+        setSelectedWarehouse((current) => {
+          const currentValue = String(current || '').trim()
+          return currentValue || preferredWarehouse
+        })
         setError(err.message)
       }
     }
@@ -1106,11 +1174,27 @@ function App() {
 
   async function loadOrders() {
     try {
-      const response = await fetch(`${API_URL}/api/logistics/orders`)
+      const warehouseParam = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim();
+      const params = new URLSearchParams()
+      if (warehouseParam) params.set('warehouse', warehouseParam)
+
+      const response = await fetch(`${API_URL}/api/logistics/orders?${params.toString()}`)
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to fetch orders')
 
-      setOrders((data.orders || []).map((order) => ({
+      const filteredOrders = (data.orders || []).filter((order) => {
+        if (!warehouseParam) return true
+
+        const orderWarehouse = String(order.warehouseName || order.warehouse_name || '').trim()
+        const normalizedWarehouse = String(warehouseParam).trim()
+
+        if (!orderWarehouse) return true
+        if (orderWarehouse.toLowerCase() === normalizedWarehouse.toLowerCase()) return true
+        if (String(order.warehouseId ?? order.warehouse_id ?? '').trim() === String(normalizedWarehouse).trim()) return true
+        return false
+      })
+
+      setOrders(filteredOrders.map((order) => ({
         ...order,
         orderNumber: order.orderNumber || order.order_number,
         customerName: order.customerName || order.customer_name,
@@ -1119,6 +1203,30 @@ function App() {
       })))
     } catch (err) {
       setOrders([])
+      setError(err.message)
+    }
+  }
+
+  async function loadTransfers() {
+    try {
+      const warehouseParam = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+      const params = new URLSearchParams()
+      if (warehouseParam) params.set('warehouse', warehouseParam)
+
+      const response = await fetch(`${API_URL}/api/logistics/transfers?${params.toString()}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to fetch transfers')
+
+      setTransfers((data.transfers || []).map((transfer) => ({
+        ...transfer,
+        id: transfer.id ?? transfer.oid ?? transfer.reference,
+        transferDate: transfer.date || transfer.createdAt || transfer.created_at,
+        sourceWarehouse: transfer.warehouseSourceName || transfer.warehouseSource || transfer.sourceWarehouse || '—',
+        destinationWarehouse: transfer.warehouseDestinationName || transfer.warehouseDestination || transfer.destinationWarehouse || '—',
+        status: transfer.status || 'Pending',
+      })))
+    } catch (err) {
+      setTransfers([])
       setError(err.message)
     }
   }
@@ -1160,7 +1268,55 @@ function App() {
     if (activeView === 'logistics') {
       loadOrders()
     }
-  }, [activeView])
+    if (activeView === 'transfer') {
+      loadTransfers()
+    }
+  }, [activeView, selectedWarehouse, currentUser?.workingWarehouse])
+
+  useEffect(() => {
+    if (!transferToView) {
+      setTransferDetails([])
+      setTransferDetailsError('')
+      setTransferPhysicalQuantities({})
+      setTransferControlQuantities({})
+      setTransferSaved(false)
+      return
+    }
+
+    let isMounted = true
+
+    async function loadTransferDetails() {
+      setTransferDetailsLoading(true)
+      setTransferDetailsError('')
+      setTransferPhysicalQuantities({})
+      setTransferControlQuantities({})
+      setTransferSaved(false)
+
+      try {
+        const details = await handleFetchTransferDetails(transferToView)
+        if (!isMounted) return
+
+        setTransferDetails(details)
+        setTransferPhysicalQuantities(Object.fromEntries(
+          details.map((detail) => [detail.detailKey, detail.physicalQuantity ?? '']),
+        ))
+        setTransferControlQuantities(Object.fromEntries(
+          details.map((detail) => [detail.detailKey, detail.controlQuantity ?? '']),
+        ))
+      } catch (error) {
+        if (isMounted) {
+          setTransferDetailsError(error.message || 'Unable to fetch transfer details')
+        }
+      } finally {
+        if (isMounted) setTransferDetailsLoading(false)
+      }
+    }
+
+    loadTransferDetails()
+    return () => {
+      isMounted = false
+    }
+  }, [transferToView])
 
   async function handleSyncFromOdbc() {
     setSyncingItems(true)
@@ -1197,9 +1353,11 @@ function App() {
     setError('')
 
     try {
+      const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim() || null
       const response = await fetch(`${API_URL}/api/logistics/orders/sync-odbc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ warehouse }),
       })
 
       const data = await response.json()
@@ -1343,6 +1501,27 @@ function App() {
       return bTime - aTime
     })
 
+  const filteredTransfers = transfers
+    .filter((transfer) => {
+      const search = String(transferSearch || '').trim().toLowerCase()
+      const searchableValues = [
+        transfer.reference,
+        transfer.customerName,
+        transfer.sourceWarehouse,
+        transfer.destinationWarehouse,
+      ]
+      const matchesSearch = !search || searchableValues.some((value) => String(value || '').toLowerCase().includes(search))
+      const matchesStatus = transferStatusFilter === 'All' || transfer.status === transferStatusFilter
+      return matchesSearch && matchesStatus
+    })
+    .sort((first, second) => new Date(second.transferDate || 0).getTime() - new Date(first.transferDate || 0).getTime())
+  const transferTotalPages = Math.max(1, Math.ceil(filteredTransfers.length / TRANSFER_PAGE_SIZE))
+  const currentTransferPage = Math.min(transferPage, transferTotalPages)
+  const visibleTransfers = filteredTransfers.slice(
+    (currentTransferPage - 1) * TRANSFER_PAGE_SIZE,
+    currentTransferPage * TRANSFER_PAGE_SIZE,
+  )
+
   const totalPendingOrders = orders.filter((order) => order.status === 'Pending').length
   const totalReadyOrders = orders.filter((order) => order.status === 'Ready').length
 
@@ -1403,11 +1582,12 @@ function App() {
     )
   }
 
-  const visibleSidebarPages = sidebarPages.filter((page) => (
-    page.key === 'access' || page.key === 'assets'
+  const visibleSidebarPages = sidebarPages.filter((page) => {
+    const isAdminVisiblePage = ['access', 'assets', 'transfer'].includes(page.key)
+    return isAdminVisiblePage
       ? currentUser?.role === 'admin' || allowedPages.includes(page.key)
       : allowedPages.includes(page.key)
-  ))
+  })
 
   return (
     <div className="app-shell h-screen overflow-hidden bg-white p-0 md:p-0 lg:p-0">
@@ -1447,7 +1627,7 @@ function App() {
                 onClick={() => {
                   setIsAuthenticated(false)
                   setCurrentUser(null)
-                  setAllowedPages(['inventory', 'logistics', 'drivers', 'schedule'])
+                  setAllowedPages(['inventory', 'logistics', 'transfer', 'drivers', 'schedule'])
                   setActiveView('inventory')
                   setError('')
                   try {
@@ -1497,7 +1677,9 @@ function App() {
                             ? 'Access management'
                             : activeView === 'qr-scan'
                               ? 'QR counting'
-                              : 'Logistics Management'}
+                              : activeView === 'transfer'
+                                ? 'Transfer Management'
+                                : 'Logistics Management'}
                   </h1>
                 </div>
               </div>
@@ -1508,7 +1690,7 @@ function App() {
                 </div>
               </div>
 
-              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'qr-scan' ? (
+              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'transfer' || activeView === 'qr-scan' ? (
                 <div className="header-actions hidden items-center gap-3 md:flex">
                   <select
                     value={selectedWarehouse}
@@ -1537,6 +1719,14 @@ function App() {
                       className="rounded-xl bg-[#1ecf9b] px-4 py-3 text-sm font-semibold text-[#0d1a2d] shadow-sm transition hover:bg-[#19b88e] disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {syncingOrders ? 'Syncing orders...' : 'Sync from silwan'}
+                    </button>
+                  ) : activeView === 'transfer' ? (
+                    <button
+                      type="button"
+                      onClick={loadTransfers}
+                      className="rounded-xl bg-[#1ecf9b] px-4 py-3 text-sm font-semibold text-[#0d1a2d] shadow-sm transition hover:bg-[#19b88e] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Refresh transfers
                     </button>
                   ) : null}
                 </div>
@@ -1570,6 +1760,7 @@ function App() {
                 onUpdateUser={handleUpdateUser}
                 onDeleteUser={handleDeleteUser}
                 currentUser={currentUser}
+                warehouses={warehouses}
               />
             ) : activeView === 'qr-scan' ? (
               <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">
@@ -1650,6 +1841,251 @@ function App() {
                 onAddDeliverySlot={handleAddDeliverySlot}
                 onDeleteDeliverySlot={handleDeleteDeliverySlot}
               />
+            ) : activeView === 'transfer' ? (
+              <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600">Warehouse transfers</p>
+                    <h3 className="text-2xl font-black text-slate-900">Transfer list</h3>
+                  </div>
+                </div>
+
+                <div className="mb-3 flex flex-col gap-3 md:flex-row">
+                  <div className="relative flex-1">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      value={transferSearch}
+                      onChange={(event) => {
+                        setTransferPage(1)
+                        setTransferSearch(event.target.value)
+                      }}
+                      placeholder="Search by reference, warehouse, or customer"
+                      className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-800 outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {['All', ...logisticsStatuses].map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => {
+                          setTransferPage(1)
+                          setTransferStatusFilter(status)
+                        }}
+                        className={`rounded-lg px-3 py-2 text-xs font-bold transition ${transferStatusFilter === status ? 'bg-slate-900 text-white' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="max-h-[calc(100vh-450px)] min-h-[260px] flex-1 overflow-auto">
+                  <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
+                    <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500">
+                      <tr>
+                        {['Reference', 'Date', 'Warehouse source', 'Warehouse destination', 'Customer', 'Prepared by', 'Controlled by', 'Status', 'Actions'].map((label) => (
+                          <th key={label} className="border-b border-slate-200 px-4 py-3 font-semibold">{label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleTransfers.length ? visibleTransfers.map((transfer) => (
+                        <tr
+                          key={transfer.id}
+                          tabIndex={0}
+                          onClick={() => setTransferToView(transfer)}
+                          onKeyDown={(event) => {
+                            if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                              event.preventDefault()
+                              setTransferToView(transfer)
+                            }
+                          }}
+                          className={`cursor-pointer border-b focus:outline-none ${getStatusClasses(transfer.status)} hover:brightness-[0.98]`}
+                          aria-label={`View details for transfer ${transfer.reference}; current status ${transfer.status}`}
+                        >
+                          <td className="px-4 py-3 font-semibold text-slate-900">{transfer.reference || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{transfer.transferDate ? formatOrderDate(transfer.transferDate) : '—'}</td>
+                          <td className="px-4 py-3 text-slate-700">{transfer.sourceWarehouse}</td>
+                          <td className="px-4 py-3 text-slate-700">{transfer.destinationWarehouse}</td>
+                          <td className="px-4 py-3 text-slate-600">{transfer.customerName || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{transfer.preparedBy || '—'}</td>
+                          <td className="px-4 py-3 text-slate-600">{transfer.controlledBy || '—'}</td>
+                          <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
+                            <select
+                              value={transfer.status || 'Pending'}
+                              onChange={(event) => {
+                                event.stopPropagation()
+                                handleTransferStatusChange(transfer.reference, event.target.value)
+                              }}
+                              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm font-semibold text-slate-800 outline-none focus:border-sky-600"
+                            >
+                              {[
+                                { value: 'Pending', label: 'A Preparer' },
+                                { value: 'Packing', label: 'Encours' },
+                                { value: 'Ready', label: 'Preparer' },
+                                { value: 'Delivered', label: 'livrer' },
+                              ].map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => setTransferToView(transfer)}
+                              className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
+                              title="View transfer details"
+                              aria-label={`View details for transfer ${transfer.reference}`}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan="9" className="px-4 py-10 text-center text-slate-500">No transfers found for the selected filters.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 py-3">
+                  <p className="text-xs text-slate-600">
+                    Showing {filteredTransfers.length ? (currentTransferPage - 1) * TRANSFER_PAGE_SIZE + 1 : 0}
+                    {' - '}{Math.min(currentTransferPage * TRANSFER_PAGE_SIZE, filteredTransfers.length)} of {filteredTransfers.length} transfers
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTransferPage(Math.max(1, currentTransferPage - 1))}
+                      disabled={currentTransferPage <= 1}
+                      className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label="Previous transfers page"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-20 text-center text-xs text-slate-600">Page {currentTransferPage} of {transferTotalPages}</span>
+                    <button
+                      type="button"
+                      onClick={() => setTransferPage(Math.min(transferTotalPages, currentTransferPage + 1))}
+                      disabled={currentTransferPage >= transferTotalPages}
+                      className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label="Next transfers page"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {transferToView && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setTransferToView(null)}>
+                    <section role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-2xl overflow-hidden border border-slate-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
+                      <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
+                        <div>
+                          <h2 className="text-lg font-bold text-slate-900">Transfer details</h2>
+                          <p className="mt-1 text-sm text-slate-600">{transferToView.reference} · {transferToView.customerName || 'Transfer'}</p>
+                        </div>
+                        <button type="button" onClick={() => setTransferToView(null)} className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-100" aria-label="Close transfer details">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </header>
+
+                      <div className="max-h-[calc(90vh-80px)] overflow-auto p-5">
+                        {transferDetailsLoading ? (
+                          <p className="py-10 text-center text-sm text-slate-500">Loading transfer details...</p>
+                        ) : transferDetailsError ? (
+                          <p role="alert" className="py-10 text-center text-sm text-rose-700">{transferDetailsError}</p>
+                        ) : transferDetails.length ? (
+                          <div className="overflow-x-auto">
+                            <table className="w-full table-fixed border-collapse text-left text-sm">
+                              <colgroup>
+                                <col className="w-[34%]" />
+                                <col className="w-[15%]" />
+                                <col className="w-[25.5%]" />
+                                <col className="w-[25.5%]" />
+                              </colgroup>
+                              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                                <tr>
+                                  {['Item', 'System quantity', 'Physical quantity', 'Control quantity'].map((label) => (
+                                    <th key={label} className="border-b border-slate-200 px-1 py-2 text-[9px] font-semibold leading-tight sm:px-3 sm:text-xs">{label}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {transferDetails.map((detail) => {
+                                  const detailKey = detail.detailKey
+                                  return (
+                                    <tr key={detailKey} className="border-b border-slate-100">
+                                      <td className="break-words px-1 py-3 font-medium text-slate-900 sm:px-3">{detail.Label1 || '—'}</td>
+                                      <td className="break-words px-1 py-3 text-slate-600 sm:px-3">{detail.Quantity ?? '—'}</td>
+                                      <td className="px-1 py-2 sm:px-3">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="any"
+                                          value={transferPhysicalQuantities[detailKey] ?? ''}
+                                          onChange={(event) => {
+                                            setTransferSaved(false)
+                                            setTransferPhysicalQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
+                                          }}
+                                          className="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-2 text-xs text-slate-900 outline-none focus:border-emerald-600 sm:px-3 sm:text-sm"
+                                        />
+                                      </td>
+                                      <td className="px-1 py-2 sm:px-3">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          step="any"
+                                          value={transferControlQuantities[detailKey] ?? ''}
+                                          onChange={(event) => {
+                                            setTransferSaved(false)
+                                            setTransferControlQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
+                                          }}
+                                          className="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-2 text-xs text-slate-900 outline-none focus:border-emerald-600 sm:px-3 sm:text-sm"
+                                        />
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                            <p className="mt-3 text-xs text-slate-500">{transferToView.sourceWarehouse || 'Selected warehouse'} → {transferToView.destinationWarehouse || 'Destination'} · {transferDetails.length} line items</p>
+                            <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
+                              <p aria-live="polite" className="text-sm text-emerald-700">{transferSaved ? 'Quantities saved.' : ''}</p>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    setTransferDetailsError('')
+                                    await handleSaveTransferPhysicalQuantities(
+                                      transferToView,
+                                      transferPhysicalQuantities,
+                                      transferControlQuantities,
+                                      authenticatedEmployeeId,
+                                      authenticatedEmployeeId,
+                                    )
+                                    setTransferSaved(true)
+                                  } catch (error) {
+                                    setTransferDetailsError(error.message || 'Unable to save transfer quantities')
+                                  }
+                                }}
+                                className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+                              >
+                                Save quantities
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="py-10 text-center text-sm text-slate-500">No transfer details found for this reference.</p>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                )}
+              </section>
             ) : activeView === 'inventory' ? (
               <>
                 <div className="summary-grid grid gap-3 md:grid-cols-3">
@@ -1917,6 +2353,7 @@ function App() {
                 onFetchOrderDetails={handleFetchOrderDetails}
                 onSaveOrderPhysicalQuantities={handleSaveOrderPhysicalQuantities}
                 authenticatedEmployeeId={authenticatedEmployeeId}
+                selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
                 orderToOpen={pendingOrderDetails}
                 onOrderDetailsOpened={setPendingOrderDetails}
               />

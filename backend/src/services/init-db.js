@@ -87,6 +87,7 @@ async function initializeDatabase() {
       full_name VARCHAR(255),
       role VARCHAR(50) NOT NULL DEFAULT 'user',
       allowed_pages TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      working_warehouse VARCHAR(255),
       created_at TIMESTAMP DEFAULT NOW()
     );
   `;
@@ -97,6 +98,8 @@ async function initializeDatabase() {
       order_number VARCHAR(100) NOT NULL UNIQUE,
       customer_name VARCHAR(255) NOT NULL,
       wilaya VARCHAR(255) NOT NULL,
+      warehouse_name VARCHAR(255),
+      warehouse_id INTEGER,
       status VARCHAR(50) NOT NULL DEFAULT 'Pending',
       employee_prepared VARCHAR(100),
       driver_id INTEGER REFERENCES drivers(id) ON DELETE SET NULL,
@@ -111,6 +114,7 @@ async function initializeDatabase() {
       order_number VARCHAR(100) PRIMARY KEY,
       physical_quantities JSONB NOT NULL DEFAULT '{}'::jsonb,
       control_quantities JSONB NOT NULL DEFAULT '{}'::jsonb,
+      employee_prepared_id VARCHAR(100),
       controller_employee_id VARCHAR(100),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -121,6 +125,14 @@ async function initializeDatabase() {
       order_number VARCHAR(100) PRIMARY KEY,
       details JSONB NOT NULL DEFAULT '[]'::jsonb,
       synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
+  const logisticsTransferStatusesTable = `
+    CREATE TABLE IF NOT EXISTS logistics_transfer_statuses (
+      transfer_reference VARCHAR(100) PRIMARY KEY,
+      status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `;
 
@@ -174,11 +186,11 @@ async function initializeDatabase() {
   `;
 
   const sampleUsers = `
-    INSERT INTO users (username, password, full_name, role, allowed_pages)
+    INSERT INTO users (username, password, full_name, role, allowed_pages, working_warehouse)
     VALUES
-      ('admin', '20199@Ima', 'System Administrator', 'admin', ARRAY['inventory', 'logistics', 'drivers', 'schedule']),
-      ('warehouse', 'warehouse123', 'Warehouse Operator', 'user', ARRAY['inventory', 'logistics']),
-      ('dispatch', 'dispatch123', 'Dispatch Agent', 'user', ARRAY['logistics', 'drivers', 'schedule'])
+      ('admin', '20199@Ima', 'System Administrator', 'admin', ARRAY['inventory', 'logistics', 'drivers', 'schedule'], 'ORAN'),
+      ('warehouse', 'warehouse123', 'Warehouse Operator', 'user', ARRAY['inventory', 'logistics'], 'BENZARGA CENTRAL'),
+      ('dispatch', 'dispatch123', 'Dispatch Agent', 'user', ARRAY['logistics', 'drivers', 'schedule'], 'ORAN')
     ON CONFLICT (username) DO NOTHING;
   `;
 
@@ -205,11 +217,15 @@ async function initializeDatabase() {
   await query(driversTable);
   await query(deliveryScheduleTable);
   await query(usersTable);
+  await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS working_warehouse VARCHAR(255);');
   await query(logisticsOrdersTable);
+  await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS warehouse_name VARCHAR(255);');
+  await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS warehouse_id INTEGER;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS ready_at TIMESTAMP;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;');
   await query(logisticsOrderPhysicalCountsTable);
   await query(logisticsOrderDetailsTable);
+  await query(logisticsTransferStatusesTable);
   await query(assetCategoriesTable);
   await query(assetPlacesTable);
   await query(assetsTable);
@@ -239,6 +255,10 @@ async function initializeDatabase() {
   await query(`
     ALTER TABLE logistics_order_physical_counts
     ADD COLUMN IF NOT EXISTS control_quantities JSONB NOT NULL DEFAULT '{}'::jsonb;
+  `);
+  await query(`
+    ALTER TABLE logistics_order_physical_counts
+    ADD COLUMN IF NOT EXISTS employee_prepared_id VARCHAR(100);
   `);
   await query(`
     ALTER TABLE logistics_order_physical_counts

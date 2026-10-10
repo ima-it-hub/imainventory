@@ -16,6 +16,7 @@ export default function UserAccessManagement({
   onUpdateUser,
   onDeleteUser,
   currentUser,
+  warehouses = [],
 }) {
   const [form, setForm] = useState({
     username: '',
@@ -23,6 +24,7 @@ export default function UserAccessManagement({
     fullName: '',
     role: 'user',
     allowedPages: ['inventory'],
+    workingWarehouse: '',
   })
   const [editingId, setEditingId] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -36,6 +38,7 @@ export default function UserAccessManagement({
       fullName: '',
       role: 'user',
       allowedPages: ['inventory'],
+      workingWarehouse: '',
     })
     setEditingId(null)
     setIsModalOpen(false)
@@ -61,6 +64,7 @@ export default function UserAccessManagement({
       fullName: user.fullName || '',
       role: user.role || 'user',
       allowedPages: user.allowedPages || [],
+      workingWarehouse: user.workingWarehouse || '',
     })
     setIsModalOpen(true)
   }
@@ -82,6 +86,7 @@ export default function UserAccessManagement({
       fullName: form.fullName.trim(),
       allowedPages: form.allowedPages,
       password: form.password.trim(),
+      workingWarehouse: String(form.workingWarehouse || '').trim(),
     }
 
     if (editingId) {
@@ -188,6 +193,20 @@ export default function UserAccessManagement({
           />
         </label>
 
+        <label className="text-sm font-medium text-slate-700">
+          Working warehouse
+          <select
+            value={form.workingWarehouse}
+            onChange={(e) => setForm({ ...form, workingWarehouse: e.target.value })}
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-violet-500"
+          >
+            <option value="">Select warehouse</option>
+            {warehouses.map((warehouse) => (
+              <option key={warehouse} value={warehouse}>{warehouse}</option>
+            ))}
+          </select>
+        </label>
+
         <div className="md:col-span-2">
           <p className="mb-2 text-sm font-semibold text-slate-700">Allowed pages</p>
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
@@ -243,6 +262,11 @@ export default function UserAccessManagement({
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-700">
                     {user.role}
                   </span>
+                  {user.workingWarehouse ? (
+                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-700">
+                      {user.workingWarehouse}
+                    </span>
+                  ) : null}
                 </div>
               </div>
 

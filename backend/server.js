@@ -10,7 +10,10 @@ const {
 const {
   getStockSnapshot,
   getLogisticsOrdersFromOdbc,
+  getTransfersFromOdbc,
+  getTransferDetailsFromOdbc,
   getLogisticsOrderDetailsForSyncFromOdbc,
+  normalizeWarehouseFilter,
 } = require('./src/services/odbc');
 const { computeReconciliation } = require('./src/lib/reconciliation');
 const {
@@ -33,6 +36,24 @@ const app = express();
 // }));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
+
+function normalizeJsonValue(value) {
+  if (typeof value === 'bigint') {
+    return value.toString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => normalizeJsonValue(entry));
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [key, normalizeJsonValue(nestedValue)]),
+    );
+  }
+
+  return value;
+}
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, service: 'inventory-reconciliation-api', timestamp: new Date().toISOString() });
@@ -367,7 +388,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const rows = await query(
-      'SELECT id, username, password, full_name, role, allowed_pages FROM users WHERE username = $1 LIMIT 1;',
+      'SELECT id, username, password, full_name, role, allowed_pages, working_warehouse FROM users WHERE username = $1 LIMIT 1;',
       [normalizedUsername],
     );
 
@@ -389,6 +410,7 @@ app.post('/api/auth/login', async (req, res) => {
       fullName: user.full_name || user.username,
       role: user.role || 'user',
       allowedPages: Array.isArray(user.allowed_pages) ? sanitizeAllowedPages(user.allowed_pages) : [],
+      workingWarehouse: String(user.working_warehouse || '').trim(),
     };
 
     res.json({ user: safeUser, message: 'Login successful.' });
@@ -400,13 +422,14 @@ app.post('/api/auth/login', async (req, res) => {
 
 app.get('/api/users', async (req, res) => {
   try {
-    const rows = await query('SELECT id, username, full_name, role, allowed_pages FROM users ORDER BY username ASC;');
+    const rows = await query('SELECT id, username, full_name, role, allowed_pages, working_warehouse FROM users ORDER BY username ASC;');
     const users = rows.map((user) => ({
       id: user.id,
       username: user.username,
       fullName: user.full_name || user.username,
       role: user.role || 'user',
       allowedPages: Array.isArray(user.allowed_pages) ? sanitizeAllowedPages(user.allowed_pages) : [],
+      workingWarehouse: String(user.working_warehouse || '').trim(),
     }));
 
     res.json({ users, count: users.length });
@@ -418,7 +441,7 @@ app.get('/api/users', async (req, res) => {
 
 app.post('/api/users', async (req, res) => {
   try {
-    const { username, password, fullName, role, allowedPages } = req.body || {};
+    const { username, password, fullName, role, allowedPages, workingWarehouse } = req.body || {};
     const cleanUsername = String(username || '').trim();
     const cleanPassword = String(password || '').trim();
 
@@ -427,11 +450,12 @@ app.post('/api/users', async (req, res) => {
     }
 
     const safeAllowedPages = sanitizeAllowedPages(allowedPages || []);
+    const safeWorkingWarehouse = String(workingWarehouse || '').trim();
     const row = await query(`
-      INSERT INTO users (username, password, full_name, role, allowed_pages)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, username, full_name, role, allowed_pages;
-    `, [cleanUsername, cleanPassword, String(fullName || '').trim() || cleanUsername, String(role || 'user').trim() || 'user', safeAllowedPages]);
+      INSERT INTO users (username, password, full_name, role, allowed_pages, working_warehouse)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, username, full_name, role, allowed_pages, working_warehouse;
+    `, [cleanUsername, cleanPassword, String(fullName || '').trim() || cleanUsername, String(role || 'user').trim() || 'user', safeAllowedPages, safeWorkingWarehouse || null]);
 
     const user = row[0];
     res.status(201).json({
@@ -441,6 +465,7 @@ app.post('/api/users', async (req, res) => {
         fullName: user.full_name || user.username,
         role: user.role || 'user',
         allowedPages: Array.isArray(user.allowed_pages) ? sanitizeAllowedPages(user.allowed_pages) : [],
+        workingWarehouse: String(user.working_warehouse || '').trim(),
       },
       message: 'User created successfully.',
     });
@@ -453,7 +478,7 @@ app.post('/api/users', async (req, res) => {
 app.put('/api/users/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, fullName, role, allowedPages, password } = req.body || {};
+    const { username, fullName, role, allowedPages, password, workingWarehouse } = req.body || {};
     const cleanUsername = String(username || '').trim();
     const safeAllowedPages = sanitizeAllowedPages(allowedPages || []);
 
@@ -472,6 +497,7 @@ app.put('/api/users/:id', async (req, res) => {
     updates.push('full_name = $' + (params.length + 1)); params.push(String(fullName || '').trim() || cleanUsername);
     updates.push('role = $' + (params.length + 1)); params.push(String(role || 'user').trim() || 'user');
     updates.push('allowed_pages = $' + (params.length + 1)); params.push(safeAllowedPages);
+    updates.push('working_warehouse = $' + (params.length + 1)); params.push(String(workingWarehouse || '').trim() || null);
 
     if (password && String(password).trim()) {
       updates.push('password = $' + (params.length + 1));
@@ -482,7 +508,7 @@ app.put('/api/users/:id', async (req, res) => {
       UPDATE users
       SET ${updates.join(', ')}
       WHERE id = $${params.length + 1}
-      RETURNING id, username, full_name, role, allowed_pages;
+      RETURNING id, username, full_name, role, allowed_pages, working_warehouse;
     `, [...params, Number(id)]);
 
     const user = row[0];
@@ -493,6 +519,7 @@ app.put('/api/users/:id', async (req, res) => {
         fullName: user.full_name || user.username,
         role: user.role || 'user',
         allowedPages: Array.isArray(user.allowed_pages) ? sanitizeAllowedPages(user.allowed_pages) : [],
+        workingWarehouse: String(user.working_warehouse || '').trim(),
       },
       message: 'User updated successfully.',
     });
@@ -640,12 +667,38 @@ app.delete('/api/drivers/:id', async (req, res) => {
 
 app.get('/api/logistics/orders', async (req, res) => {
   try {
+    const warehouseFilter = String(req.query.warehouse || '').trim();
+    const params = [];
+    let warehouseClause = '';
+
+    if (warehouseFilter) {
+      const normalized = normalizeWarehouseFilter(warehouseFilter);
+      const warehouseName = String(warehouseFilter).trim();
+
+      if (normalized && normalized.id !== null) {
+        warehouseClause = `WHERE (
+          LOWER(COALESCE(lo.warehouse_name, '')) = LOWER($1)
+          OR lo.warehouse_id = $2
+          OR CAST(lo.warehouse_id AS TEXT) = $3
+        )`;
+        params.push(warehouseName, Number(normalized.id), String(normalized.id));
+      } else {
+        warehouseClause = `WHERE (
+          LOWER(COALESCE(lo.warehouse_name, '')) = LOWER($1)
+          OR LOWER(COALESCE(CAST(lo.warehouse_id AS TEXT), '')) = LOWER($2)
+        )`;
+        params.push(warehouseName, warehouseName.toLowerCase());
+      }
+    }
+
     const rows = await query(`
       SELECT
         lo.id,
         lo.order_number AS "orderNumber",
         lo.customer_name AS "customerName",
         lo.wilaya,
+        lo.warehouse_name AS "warehouseName",
+        lo.warehouse_id AS "warehouseId",
         lo.status,
         lo.employee_prepared AS "employeePrepared",
         CASE
@@ -670,17 +723,89 @@ app.get('/api/logistics/orders', async (req, res) => {
       LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
       LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
       LEFT JOIN logistics_order_details order_details ON order_details.order_number = lo.order_number
+      ${warehouseClause}
       ORDER BY lo.created_at DESC;
-    `);
+    `, params);
 
     const orders = rows.map(({ systemDetails, physicalQuantities, ...order }) => ({
       ...order,
       quantitiesMatch: orderQuantitiesMatch(systemDetails, physicalQuantities),
     }));
-    res.json({ orders, count: orders.length });
+    res.json({ orders, count: orders.length, warehouse: warehouseFilter || null });
   } catch (error) {
     console.error('Logistics orders fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch logistics orders', details: error.message });
+  }
+});
+
+app.get('/api/logistics/transfers', async (req, res) => {
+  try {
+    const warehouse = String(req.query.warehouse || '').trim();
+    const rows = await getTransfersFromOdbc(warehouse || null);
+    const transferRows = (rows || []).map((row) => ({
+      id: row.id ?? row.oid ?? row.Reference ?? row.reference,
+      reference: row.reference ?? row.Reference ?? null,
+      date: row.date ?? row.Date ?? null,
+      warehouseSource: row.warehouseSource ?? row.WarehouseSource ?? null,
+      warehouseSourceName: row.warehouseSourceName ?? row.WarehouseSourceName ?? null,
+      warehouseDestination: row.warehouseDestination ?? row.WarehouseDestination ?? null,
+      warehouseDestinationName: row.warehouseDestinationName ?? row.WarehouseDestinationName ?? null,
+      customerName: row.customerName ?? row.CustomerName ?? row['Label1'] ?? row.label1 ?? null,
+      documentCategory4: row.documentCategory4 ?? row.DocumentCategory4 ?? 19,
+    }));
+    const references = transferRows.map((transfer) => transfer.reference).filter(Boolean);
+    const savedStatuses = references.length
+      ? await query('SELECT transfer_reference AS "transferReference", status FROM logistics_transfer_statuses WHERE transfer_reference = ANY($1::text[])', [references])
+      : [];
+    const savedEmployees = references.length
+      ? await query(`
+        SELECT
+          counts.order_number AS "transferReference",
+          COALESCE(prepared_employee.name, counts.employee_prepared_id) AS "preparedBy",
+          COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy"
+        FROM logistics_order_physical_counts counts
+        LEFT JOIN employees prepared_employee ON prepared_employee.employee_id = counts.employee_prepared_id
+        LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
+        WHERE counts.order_number = ANY($1::text[])
+      `, [references])
+      : [];
+    const statusByReference = new Map(savedStatuses.map((row) => [row.transferReference, row.status]));
+    const employeesByReference = new Map(savedEmployees.map((row) => [row.transferReference, row]));
+    const transfers = transferRows.map((transfer) => ({
+      ...transfer,
+      status: statusByReference.get(transfer.reference) || 'Pending',
+      preparedBy: employeesByReference.get(transfer.reference)?.preparedBy || null,
+      controlledBy: employeesByReference.get(transfer.reference)?.controlledBy || null,
+    }));
+
+    const payload = normalizeJsonValue({ transfers, count: transfers.length, warehouse: warehouse || null });
+    res.json(payload);
+  } catch (error) {
+    console.error('Logistics transfers fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch transfer records', details: error.message });
+  }
+});
+
+app.put('/api/logistics/transfers/:reference/status', async (req, res) => {
+  try {
+    const reference = String(req.params.reference || '').trim();
+    const status = String(req.body?.status || '').trim();
+    if (!reference || !['Pending', 'Packing', 'Ready', 'Delivered'].includes(status)) {
+      return res.status(400).json({ error: 'Choose a valid transfer reference and status.' });
+    }
+
+    const rows = await query(`
+      INSERT INTO logistics_transfer_statuses (transfer_reference, status, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (transfer_reference) DO UPDATE
+      SET status = EXCLUDED.status, updated_at = NOW()
+      RETURNING transfer_reference AS "transferReference", status;
+    `, [reference, status]);
+
+    res.json({ ok: true, transfer: rows[0] });
+  } catch (error) {
+    console.error('Transfer status update failed:', error);
+    res.status(500).json({ error: 'Unable to update transfer status', details: error.message });
   }
 });
 
@@ -706,6 +831,33 @@ app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
   } catch (error) {
     console.error('Logistics order details fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch logistics order details', details: error.message });
+  }
+});
+
+app.get('/api/logistics/transfers/:reference/details', async (req, res) => {
+  try {
+    const transferReference = String(req.params.reference);
+    const [detailRows, savedRows] = await Promise.all([
+      getTransferDetailsFromOdbc(transferReference),
+      query('SELECT physical_quantities, control_quantities FROM logistics_order_physical_counts WHERE order_number = $1', [transferReference]),
+    ]);
+
+    const savedQuantities = savedRows[0]?.physical_quantities || {};
+    const savedControlQuantities = savedRows[0]?.control_quantities || {};
+    const details = attachSavedOrderQuantities(
+      detailRows || [],
+      savedQuantities,
+      savedControlQuantities,
+    );
+
+    const payload = JSON.stringify(
+      { details, count: details.length },
+      (_key, value) => typeof value === 'bigint' ? value.toString() : value,
+    );
+    res.type('json').send(payload);
+  } catch (error) {
+    console.error('Transfer details fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch transfer details', details: error.message });
   }
 });
 
@@ -796,9 +948,80 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
   }
 });
 
+app.put('/api/logistics/transfers/:reference/physical-counts', async (req, res) => {
+  try {
+    const reference = String(req.params.reference);
+    const input = req.body?.physicalQuantities;
+    const controlInput = req.body?.controlQuantities || {};
+    const employeePrepared = String(req.body?.employeePrepared || '').trim();
+    const controllerEmployeeId = String(req.body?.controllerEmployeeId || '').trim();
+
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return res.status(400).json({ error: 'Physical quantities must be provided as an object.' });
+    }
+    if (typeof controlInput !== 'object' || Array.isArray(controlInput)) {
+      return res.status(400).json({ error: 'Control quantities must be provided as an object.' });
+    }
+
+    const physicalQuantities = {};
+    const controlQuantities = {};
+    for (const [quantities, target, label] of [
+      [input, physicalQuantities, 'Physical'],
+      [controlInput, controlQuantities, 'Control'],
+    ]) {
+      for (const [detailKey, rawQuantity] of Object.entries(quantities)) {
+        if (rawQuantity === '' || rawQuantity === null || rawQuantity === undefined) continue;
+        const quantity = Number(rawQuantity);
+        if (!Number.isFinite(quantity) || quantity < 0) {
+          return res.status(400).json({ error: `${label} quantities must be non-negative numbers.` });
+        }
+        target[detailKey] = String(rawQuantity);
+      }
+    }
+
+    const hasPhysicalQuantity = Object.keys(physicalQuantities).length > 0;
+    const hasControlQuantity = Object.keys(controlQuantities).length > 0;
+    const employeeRows = hasPhysicalQuantity && employeePrepared
+      ? await query('SELECT employee_id FROM employees WHERE employee_id = $1 LIMIT 1', [employeePrepared])
+      : [];
+    const controllerRows = hasControlQuantity && controllerEmployeeId
+      ? await query('SELECT employee_id FROM employees WHERE employee_id = $1 LIMIT 1', [controllerEmployeeId])
+      : [];
+
+    const assignedEmployee = employeeRows.length ? employeePrepared : '';
+    const assignedController = controllerRows.length ? controllerEmployeeId : '';
+    const rows = await query(`
+      INSERT INTO logistics_order_physical_counts (order_number, physical_quantities, control_quantities, employee_prepared_id, controller_employee_id, updated_at)
+      VALUES ($1, $2::jsonb, $3::jsonb, NULLIF($4, ''), NULLIF($5, ''), NOW())
+      ON CONFLICT (order_number) DO UPDATE
+      SET physical_quantities = EXCLUDED.physical_quantities,
+          control_quantities = EXCLUDED.control_quantities,
+          employee_prepared_id = COALESCE(EXCLUDED.employee_prepared_id, logistics_order_physical_counts.employee_prepared_id),
+          controller_employee_id = COALESCE(EXCLUDED.controller_employee_id, logistics_order_physical_counts.controller_employee_id),
+          updated_at = NOW()
+      RETURNING order_number, updated_at AS "updatedAt", employee_prepared_id AS "employeePrepared", controller_employee_id AS "controllerEmployeeId";
+    `, [reference, JSON.stringify(physicalQuantities), JSON.stringify(controlQuantities), assignedEmployee, assignedController]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Transfer not found.' });
+    }
+
+    res.json({
+      ok: true,
+      orderNumber: reference,
+      updatedAt: rows[0].updatedAt,
+      employeePrepared: rows[0].employeePrepared,
+      controllerEmployeeId: rows[0].controllerEmployeeId,
+    });
+  } catch (error) {
+    console.error('Transfer physical quantities save failed:', error);
+    res.status(500).json({ error: 'Unable to save transfer quantities', details: error.message });
+  }
+});
+
 app.post('/api/logistics/orders', async (req, res) => {
   try {
-    const { orderNumber, customerName, wilaya, status, employeePrepared, createdAt, driverId } = req.body || {};
+    const { orderNumber, customerName, wilaya, status, employeePrepared, createdAt, driverId, warehouseName, warehouseId } = req.body || {};
 
     if (!orderNumber || !customerName || !wilaya || !employeePrepared) {
       return res.status(400).json({ error: 'Order number, customer, wilaya, and employee are required.' });
@@ -806,18 +1029,20 @@ app.post('/api/logistics/orders', async (req, res) => {
 
     const created = createdAt || new Date().toISOString();
     const insertion = await query(`
-      INSERT INTO logistics_orders (order_number, customer_name, wilaya, status, employee_prepared, driver_id, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO logistics_orders (order_number, customer_name, wilaya, warehouse_name, warehouse_id, status, employee_prepared, driver_id, created_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING
         id,
         order_number AS "orderNumber",
         customer_name AS "customerName",
         wilaya,
+        warehouse_name AS "warehouseName",
+        warehouse_id AS "warehouseId",
         status,
         employee_prepared AS "employeePrepared",
         driver_id AS "driverId",
         created_at AS "createdAt";
-    `, [String(orderNumber).trim(), String(customerName).trim(), String(wilaya).trim(), String(status || 'Pending').trim(), String(employeePrepared).trim(), driverId ? Number(driverId) : null, created]);
+    `, [String(orderNumber).trim(), String(customerName).trim(), String(wilaya).trim(), String(warehouseName || '').trim() || null, warehouseId !== undefined && warehouseId !== null && warehouseId !== '' ? Number(warehouseId) : null, String(status || 'Pending').trim(), String(employeePrepared).trim(), driverId ? Number(driverId) : null, created]);
 
     const order = insertion[0];
     if (order && order.driverId) {
@@ -839,8 +1064,9 @@ app.post('/api/logistics/orders', async (req, res) => {
 
 app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
   try {
-    const rows = await getLogisticsOrdersFromOdbc();
-    const detailRows = await getLogisticsOrderDetailsForSyncFromOdbc();
+    const warehouse = String(req.body?.warehouse || req.query?.warehouse || '').trim();
+    const rows = await getLogisticsOrdersFromOdbc(warehouse || null);
+    const detailRows = await getLogisticsOrderDetailsForSyncFromOdbc(warehouse || null);
     const ordersByNumber = new Map();
 
     for (const row of rows || []) {
@@ -849,6 +1075,9 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         row['Label1'] || row.label1 || row['ThirdPartyLabel'] || row.thirdPartyLabel || row['Customer'] || row.customer || 'Unknown customer'
       ).trim();
       const wilaya = String(row['Wilaya'] || row.wilaya || 'Unknown').trim();
+      const warehouseId = row.WarehouseSource ?? row['WarehouseSource'] ?? null;
+      const warehouseNameFromRow = String(row['WarehouseName'] || row.warehouseName || row['Depot'] || row.depot || '').trim();
+      const warehouseName = warehouseNameFromRow || (warehouse ? String(warehouse).trim() : '') || (warehouseId !== null && warehouseId !== undefined ? String(warehouseId) : '');
 
       if (!orderNumber || !customerName || !wilaya) continue;
 
@@ -863,6 +1092,8 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
           order_number: orderNumber,
           customer_name: customerName,
           wilaya,
+          warehouse_name: warehouseName,
+          warehouse_id: warehouseId ? Number(warehouseId) : null,
           created_at: createdAt,
         });
       }
@@ -873,17 +1104,23 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
 
     const orderBatchSize = 500;
     const orderUpsertSql = `
-      INSERT INTO logistics_orders (order_number, customer_name, wilaya, status, employee_prepared, driver_id, created_at)
-      SELECT order_number, customer_name, wilaya, 'Pending', NULL, NULL, created_at
+      INSERT INTO logistics_orders (order_number, customer_name, wilaya, warehouse_name, warehouse_id, status, employee_prepared, driver_id, created_at)
+      SELECT order_number, customer_name, wilaya, warehouse_name, warehouse_id, 'Pending', NULL, NULL, created_at
       FROM jsonb_to_recordset($1::jsonb) AS incoming(
         order_number TEXT,
         customer_name TEXT,
         wilaya TEXT,
+        warehouse_name TEXT,
+        warehouse_id INTEGER,
         created_at TIMESTAMPTZ
       )
       ON CONFLICT (order_number) DO UPDATE
-      SET wilaya = EXCLUDED.wilaya
+      SET wilaya = EXCLUDED.wilaya,
+          warehouse_name = EXCLUDED.warehouse_name,
+          warehouse_id = EXCLUDED.warehouse_id
       WHERE logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
+         OR logistics_orders.warehouse_name IS DISTINCT FROM EXCLUDED.warehouse_name
+         OR logistics_orders.warehouse_id IS DISTINCT FROM EXCLUDED.warehouse_id
       RETURNING id;
     `;
 
@@ -910,6 +1147,8 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         order_number AS "orderNumber",
         customer_name AS "customerName",
         wilaya,
+        warehouse_name AS "warehouseName",
+        warehouse_id AS "warehouseId",
         status,
         employee_prepared AS "employeePrepared",
         CASE
@@ -925,7 +1164,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       ORDER BY created_at DESC;
     `);
 
-    res.json({ ok: true, count: inserted, orders: allOrders, message: `Synced ${inserted} logistics orders from ODBC.` });
+    res.json({ ok: true, count: inserted, orders: allOrders, warehouse, message: warehouse ? `Synced ${inserted} logistics orders for ${warehouse}.` : `Synced ${inserted} logistics orders from ODBC.` });
   } catch (error) {
     console.error('ODBC logistics sync failed:', error);
     res.status(500).json({ error: 'Unable to sync logistics orders from ODBC', details: error.message });

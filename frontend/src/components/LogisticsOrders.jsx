@@ -44,6 +44,7 @@ export default function LogisticsOrders({
   onFetchOrderDetails,
   onSaveOrderPhysicalQuantities,
   authenticatedEmployeeId,
+  selectedWarehouse,
   orderToOpen,
   onOrderDetailsOpened,
 }) {
@@ -537,7 +538,9 @@ export default function LogisticsOrders({
                       })}
                     </tbody>
                   </table>
-                  <p className="mt-3 text-xs text-slate-500">Warehouse 6 · {orderDetails.length} line items</p>
+                  <p className="mt-3 text-xs text-slate-500">
+                    {(detailsOrder.warehouseName || detailsOrder.warehouse_name || selectedWarehouse || 'Selected warehouse')} · {orderDetails.length} line items
+                  </p>
                   <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
                     <p aria-live="polite" className="text-sm text-emerald-700">
                       {detailsSaved ? 'Quantities saved.' : ''}
@@ -553,7 +556,9 @@ export default function LogisticsOrders({
                   </div>
                 </div>
               ) : (
-                <p className="py-10 text-center text-sm text-slate-500">No warehouse 6 details found for this order.</p>
+                <p className="py-10 text-center text-sm text-slate-500">
+                  No details found for {(detailsOrder.warehouseName || detailsOrder.warehouse_name || selectedWarehouse || 'the selected warehouse')}.
+                </p>
               )}
             </div>
           </section>

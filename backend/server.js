@@ -214,6 +214,32 @@ app.delete('/api/asset-places/:id', async (req, res) => {
   }
 });
 
+app.get('/api/assets', async (_req, res) => {
+  try {
+    const assets = await query(`
+      SELECT
+        asset.id,
+        asset.name,
+        asset.category_id AS "categoryId",
+        category.name AS "categoryName",
+        asset.quantity,
+        asset.place_id AS "placeId",
+        place.name AS "placeName",
+        asset.purchase_value AS "purchaseValue",
+        asset.current_value AS "currentValue",
+        asset.repair_status AS "repairStatus"
+      FROM assets AS asset
+      INNER JOIN asset_categories AS category ON category.id = asset.category_id
+      INNER JOIN asset_places AS place ON place.id = asset.place_id
+      ORDER BY asset.name ASC, asset.id ASC;
+    `);
+    res.json({ assets, count: assets.length });
+  } catch (error) {
+    console.error('Assets fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch assets', details: error.message });
+  }
+});
+
 app.post('/api/assets', async (req, res) => {
   try {
     const { name, categoryId, quantity, placeId, purchaseValue, currentValue, repairStatus } = req.body || {};

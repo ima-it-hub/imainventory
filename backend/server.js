@@ -757,7 +757,9 @@ app.get('/api/logistics/transfers', async (req, res) => {
       LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
       WHERE ($1::text IS NULL
         OR LOWER(TRIM(COALESCE(transfer.warehouse_source_name, ''))) = LOWER(TRIM($1))
-        OR COALESCE(transfer.warehouse_source_id, '') = $1)
+        OR COALESCE(transfer.warehouse_source_id, '') = $1
+        OR LOWER(TRIM(COALESCE(transfer.warehouse_destination_name, ''))) = LOWER(TRIM($1))
+        OR COALESCE(transfer.warehouse_destination_id, '') = $1)
       ORDER BY transfer.document_date DESC NULLS LAST, transfer.transfer_reference DESC;
     `, [warehouse || null]);
 

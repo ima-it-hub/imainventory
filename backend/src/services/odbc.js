@@ -162,6 +162,30 @@ async function buildWarehouseFilterSql(warehouseFilter = null, sourceAlias = 'd'
   };
 }
 
+async function buildTransferWarehouseFilterSql(warehouseFilter = null) {
+  const normalized = normalizeWarehouseFilter(warehouseFilter);
+  if (!normalized) return { sql: '', params: [] };
+
+  if (normalized.id !== null) {
+    return {
+      sql: 'AND (d."WarehouseSource" = ? OR d."WarehouseDestination" = ?)',
+      params: [normalized.id, normalized.id],
+    };
+  }
+
+  const resolved = await resolveWarehouseFilter(warehouseFilter);
+  if (!resolved || !Array.isArray(resolved.values) || !resolved.values.length) {
+    return { sql: 'AND 1 = 0', params: [] };
+  }
+
+  const ids = resolved.values;
+  const placeholders = ids.map(() => '?').join(', ');
+  return {
+    sql: `AND (d."WarehouseSource" IN (${placeholders}) OR d."WarehouseDestination" IN (${placeholders}))`,
+    params: [...ids, ...ids],
+  };
+}
+
 async function getStockSnapshot(warehouseFilter = null) {
   const filters = [];
   const params = [];
@@ -235,7 +259,7 @@ async function getLogisticsOrderDetailsFromOdbc(identifier) {
 }
 
 async function getTransferSyncRowsFromOdbc(warehouseFilter = null) {
-  const warehouseCondition = await buildWarehouseFilterSql(warehouseFilter, 'd');
+  const warehouseCondition = await buildTransferWarehouseFilterSql(warehouseFilter);
   const sql = `
     SELECT
       "d"."Oid" AS "id",
@@ -329,6 +353,7 @@ module.exports = {
   normalizeWarehouseFilter,
   resolveWarehouseFilter,
   buildWarehouseFilterSql,
+  buildTransferWarehouseFilterSql,
   getLogisticsOrdersFromOdbc,
   getTransferSyncRowsFromOdbc,
   getLogisticsOrderDetailsFromOdbc,

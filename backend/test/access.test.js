@@ -4,8 +4,8 @@ const assert = require('node:assert/strict');
 const { sanitizeAllowedPages, canAccessPage, ADMIN_CREDENTIALS } = require('../src/lib/access');
 
 test('sanitizeAllowedPages keeps only valid sidebar pages', () => {
-  const result = sanitizeAllowedPages(['inventory', 'drivers', 'unknown', 'logistics', 'transfer', 'inventory']);
-  assert.deepEqual(result, ['inventory', 'drivers', 'logistics', 'transfer']);
+  const result = sanitizeAllowedPages(['inventory', 'drivers', 'unknown', 'logistics', 'status-dashboard', 'transfer', 'inventory']);
+  assert.deepEqual(result, ['inventory', 'drivers', 'logistics', 'status-dashboard', 'transfer']);
 });
 
 test('admin credentials are available for the required login', () => {
@@ -16,5 +16,6 @@ test('admin credentials are available for the required login', () => {
 test('permission helper blocks pages not granted to the user', () => {
   assert.equal(canAccessPage('schedule', ['inventory', 'logistics']), false);
   assert.equal(canAccessPage('transfer', ['inventory', 'transfer']), true);
+  assert.equal(canAccessPage('status-dashboard', ['inventory', 'status-dashboard']), true);
   assert.equal(canAccessPage('drivers', ['inventory', 'drivers']), true);
 });

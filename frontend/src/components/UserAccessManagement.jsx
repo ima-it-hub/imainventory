@@ -5,6 +5,7 @@ const pageDefinitions = [
   { key: 'inventory', label: 'Inventory' },
   { key: 'qr-scan', label: 'QR scan' },
   { key: 'logistics', label: 'Logistics' },
+  { key: 'status-dashboard', label: 'Status dashboard' },
   { key: 'transfer', label: 'Transfer' },
   { key: 'drivers', label: 'Drivers' },
   { key: 'schedule', label: 'Delivery plan' },

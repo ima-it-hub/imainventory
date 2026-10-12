@@ -25,6 +25,7 @@ import {
 import { Html5QrcodeScanner } from 'html5-qrcode'
 import { QRCodeSVG } from 'qrcode.react'
 import LogisticsOrders from './components/LogisticsOrders'
+import OrderStatusDashboard from './components/OrderStatusDashboard'
 import DriversManagement from './components/DriversManagement'
 import DeliverySchedule from './components/DeliverySchedule'
 import UserAccessManagement from './components/UserAccessManagement'
@@ -295,6 +296,7 @@ function App() {
     { key: 'inventory', label: 'Inventory', icon: Warehouse },
     { key: 'qr-scan', label: 'QR scan', icon: QrCode },
     { key: 'logistics', label: 'Logistics', icon: Truck },
+    { key: 'status-dashboard', label: 'Status dashboard', icon: ClipboardList },
     { key: 'transfer', label: 'Transfer', icon: PackageSearch },
     { key: 'drivers', label: 'Drivers', icon: UserRound },
     { key: 'schedule', label: 'Delivery plan', icon: CalendarRange },
@@ -411,8 +413,10 @@ function App() {
       setOrders((current) => current.map((order) => (
         order.id === orderId ? { ...order, ...data.order } : order
       )))
+      return true
     } catch (err) {
       setError(err.message)
+      return false
     }
   }
 
@@ -1289,7 +1293,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (activeView === 'logistics') {
+    if (activeView === 'logistics' || activeView === 'status-dashboard') {
       loadOrders()
     }
     if (activeView === 'transfer') {
@@ -1311,7 +1315,7 @@ function App() {
           await searchItems(query, { silent: true })
         } else if (activeView === 'qr-scan') {
           await searchItems('', { silent: true })
-        } else if (activeView === 'logistics') {
+        } else if (activeView === 'logistics' || activeView === 'status-dashboard') {
           await loadOrders()
         } else if (activeView === 'transfer') {
           await loadTransfers()
@@ -1656,7 +1660,7 @@ function App() {
   }
 
   const visibleSidebarPages = sidebarPages.filter((page) => {
-    const isAdminVisiblePage = ['access', 'assets', 'transfer'].includes(page.key)
+    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'status-dashboard'].includes(page.key)
     return isAdminVisiblePage
       ? currentUser?.role === 'admin' || allowedPages.includes(page.key)
       : allowedPages.includes(page.key)
@@ -1752,6 +1756,8 @@ function App() {
                               ? 'QR counting'
                               : activeView === 'transfer'
                                 ? 'Transfer Management'
+                                        : activeView === 'status-dashboard'
+                                          ? 'Order Status Dashboard'
                                 : 'Logistics Management'}
                   </h1>
                 </div>
@@ -1763,7 +1769,7 @@ function App() {
                 </div>
               </div>
 
-              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'transfer' || activeView === 'qr-scan' ? (
+              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'qr-scan' ? (
                 <div className="header-actions hidden items-center gap-3 md:flex">
                   <select
                     value={selectedWarehouse}
@@ -1914,6 +1920,12 @@ function App() {
                 setScheduleForm={setScheduleForm}
                 onAddDeliverySlot={handleAddDeliverySlot}
                 onDeleteDeliverySlot={handleDeleteDeliverySlot}
+              />
+            ) : activeView === 'status-dashboard' ? (
+              <OrderStatusDashboard
+                orders={orders}
+                deliverySchedule={deliverySchedule}
+                onStatusChange={handleOrderStatusChange}
               />
             ) : activeView === 'transfer' ? (
               <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">

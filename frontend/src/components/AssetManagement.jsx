@@ -109,8 +109,8 @@ export default function AssetManagement({ apiUrl }) {
     return data
   }
 
-  async function loadData() {
-    setError('')
+  async function loadData({ silent = false } = {}) {
+    if (!silent) setError('')
     try {
       const [assetData, categoryData, placeData] = await Promise.all([
         request('/api/assets'),
@@ -121,12 +121,36 @@ export default function AssetManagement({ apiUrl }) {
       setCategories(categoryData.categories || [])
       setPlaces(placeData.places || [])
     } catch (loadError) {
-      setError(loadError.message || 'Unable to load asset data')
+      if (!silent) setError(loadError.message || 'Unable to load asset data')
     }
   }
 
   useEffect(() => {
     loadData()
+
+    let refreshInProgress = false
+    async function refreshData() {
+      if (document.hidden || refreshInProgress) return
+      refreshInProgress = true
+      try {
+        await loadData({ silent: true })
+      } finally {
+        refreshInProgress = false
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (!document.hidden) refreshData()
+    }
+
+    const intervalId = window.setInterval(refreshData, 10000)
+    window.addEventListener('focus', refreshData)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', refreshData)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [])
 
   const filteredAssets = useMemo(() => {

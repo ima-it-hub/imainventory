@@ -979,12 +979,14 @@ function App() {
     }
   }, [activeView, selectedWarehouse])
 
-  async function searchItems(value = query) {
+  async function searchItems(value = query, { silent = false } = {}) {
     const term = (value || query).trim()
     const warehouseForQuery = String(selectedWarehouse || '').trim() || 'Main warehouse'
 
-    setLoading(true)
-    setError('')
+    if (!silent) {
+      setLoading(true)
+      setError('')
+    }
 
     try {
       const params = new URLSearchParams()
@@ -998,9 +1000,9 @@ function App() {
       setItems(data.items || [])
       if (!term) setSelectedItem(null)
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -1294,6 +1296,55 @@ function App() {
       loadTransfers()
     }
   }, [activeView, selectedWarehouse, currentUser?.workingWarehouse])
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined
+
+    let refreshInProgress = false
+
+    async function refreshActiveView() {
+      if (document.hidden || refreshInProgress) return
+      refreshInProgress = true
+
+      try {
+        if (activeView === 'inventory') {
+          await searchItems(query, { silent: true })
+        } else if (activeView === 'qr-scan') {
+          await searchItems('', { silent: true })
+        } else if (activeView === 'logistics') {
+          await loadOrders()
+        } else if (activeView === 'transfer') {
+          await loadTransfers()
+        } else if (activeView === 'access') {
+          await loadUsers()
+        } else if (activeView === 'drivers') {
+          const response = await fetch(`${API_URL}/api/drivers`)
+          const data = await response.json()
+          if (response.ok) setDrivers(data.drivers || [])
+        } else if (activeView === 'schedule') {
+          const response = await fetch(`${API_URL}/api/delivery-schedule`)
+          const data = await response.json()
+          if (response.ok) setDeliverySchedule(data.routes || [])
+        }
+      } finally {
+        refreshInProgress = false
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (!document.hidden) refreshActiveView()
+    }
+
+    const intervalId = window.setInterval(refreshActiveView, 10000)
+    window.addEventListener('focus', refreshActiveView)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', refreshActiveView)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [isAuthenticated, activeView, selectedWarehouse, currentUser?.workingWarehouse, query, itemFilter])
 
   useEffect(() => {
     if (!transferToView) {

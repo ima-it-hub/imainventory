@@ -38,6 +38,7 @@ const DELIVERY_SCHEDULE_KEY = 'inventory-delivery-schedule'
 const AUTH_SESSION_KEY = 'inventory-auth-session'
 
 const logisticsStatuses = ['Pending', 'Packing', 'Ready', 'Delivered']
+const orderStatuses = [...logisticsStatuses, 'Cancelled', 'Failed']
 const TRANSFER_PAGE_SIZE = 50
 
 const initialOrders = [
@@ -336,6 +337,10 @@ function App() {
         return 'bg-indigo-100 text-indigo-800 border border-indigo-300'
       case 'Packing':
         return 'bg-orange-100 text-orange-800 border border-orange-300'
+      case 'Cancelled':
+        return 'bg-gray-100 text-gray-700 border border-gray-300'
+      case 'Failed':
+        return 'bg-yellow-100 text-yellow-800 border border-yellow-300'
       default:
         return 'bg-rose-100 text-rose-800 border border-rose-300'
     }
@@ -2431,7 +2436,7 @@ function App() {
                 filteredOrders={filteredOrders}
                 totalPendingOrders={totalPendingOrders}
                 totalReadyOrders={totalReadyOrders}
-                logisticsStatuses={logisticsStatuses}
+                logisticsStatuses={orderStatuses}
                 formatOrderDate={formatOrderDate}
                 getStatusClasses={getStatusClasses}
                 onStatusChange={handleOrderStatusChange}

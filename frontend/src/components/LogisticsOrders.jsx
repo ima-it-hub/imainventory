@@ -7,7 +7,13 @@ const ORDER_STATUS_OPTIONS = [
   { value: 'Packing', label: 'Encours' },
   { value: 'Ready', label: 'Preparer' },
   { value: 'Delivered', label: 'livrer' },
+  { value: 'Cancelled', label: 'Annulé' },
+  { value: 'Failed', label: 'Vente ratée' },
 ]
+
+const ORDER_STATUS_LABELS = Object.fromEntries(
+  ORDER_STATUS_OPTIONS.map(({ value, label }) => [value, label]),
+)
 
 function formatDeliveryDuration(seconds) {
   const value = Number(seconds)
@@ -278,7 +284,7 @@ export default function LogisticsOrders({
                   }}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition ${orderStatusFilter === status ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'}`}
                 >
-                  {status}
+                  {ORDER_STATUS_LABELS[status] || status}
                 </button>
               ))}
             </div>
@@ -438,6 +444,14 @@ export default function LogisticsOrders({
             <span className="inline-flex items-center gap-2">
               <span className="h-3 w-3 rounded border border-teal-300 bg-teal-100" />
               Delivered
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded border border-gray-300 bg-gray-100" />
+              Annulé
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded border border-yellow-300 bg-yellow-100" />
+              Vente ratée
             </span>
           </div>
         </div>

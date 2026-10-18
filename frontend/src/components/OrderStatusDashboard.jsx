@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import OrderDetailsDialog from './OrderDetailsDialog'
 
 const STATUS_COLUMNS = [
   { status: 'Pending', label: 'À préparer', accent: 'border-rose-300 bg-rose-50 text-rose-800', card: 'border-rose-200 bg-rose-50' },
@@ -10,12 +11,21 @@ function normalize(value) {
   return String(value || '').trim().toLocaleLowerCase()
 }
 
-export default function OrderStatusDashboard({ orders, deliverySchedule, onStatusChange }) {
+export default function OrderStatusDashboard({
+  orders,
+  deliverySchedule,
+  onStatusChange,
+  onFetchOrderDetails,
+  onSavePhysicalQuantities,
+  authenticatedEmployeeId,
+  selectedWarehouse,
+}) {
   const [selectedWilaya, setSelectedWilaya] = useState('')
   const [selectedSchedule, setSelectedSchedule] = useState('')
   const [draggedOrderId, setDraggedOrderId] = useState(null)
   const [movingOrderId, setMovingOrderId] = useState(null)
   const [moveError, setMoveError] = useState('')
+  const [detailsOrder, setDetailsOrder] = useState(null)
 
   const wilayas = [...new Set(orders.map((order) => String(order.wilaya || '').trim()).filter(Boolean))]
     .sort((first, second) => first.localeCompare(second))
@@ -115,12 +125,18 @@ export default function OrderStatusDashboard({ orders, deliverySchedule, onStatu
                     }}
                     onDragEnd={() => setDraggedOrderId(null)}
                     onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        setDetailsOrder(order)
+                        return
+                      }
                       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                       const index = STATUS_COLUMNS.findIndex((entry) => entry.status === order.status)
                       const nextColumn = STATUS_COLUMNS[index + (event.key === 'ArrowRight' ? 1 : -1)]
                       if (nextColumn) moveOrder(order.id, nextColumn.status)
                     }}
                     tabIndex={0}
+                    onClick={() => setDetailsOrder(order)}
                     aria-label={`${order.customerName || 'Client'}, ${order.wilaya || 'Wilaya inconnue'}, statut ${column.label}. Utilisez les flèches gauche et droite pour changer le statut.`}
                     className={`cursor-grab border p-3 shadow-sm transition hover:shadow ${column.card} ${draggedOrderId === order.id ? 'opacity-40' : ''} ${movingOrderId === order.id ? 'cursor-wait opacity-60' : ''}`}
                   >
@@ -136,6 +152,17 @@ export default function OrderStatusDashboard({ orders, deliverySchedule, onStatu
           )
         })}
       </div>
+      {detailsOrder && (
+        <OrderDetailsDialog
+          key={detailsOrder.orderNumber || detailsOrder.id}
+          order={detailsOrder}
+          onClose={() => setDetailsOrder(null)}
+          onFetchOrderDetails={onFetchOrderDetails}
+          onSavePhysicalQuantities={onSavePhysicalQuantities}
+          authenticatedEmployeeId={authenticatedEmployeeId}
+          selectedWarehouse={selectedWarehouse}
+        />
+      )}
     </section>
   )
 }

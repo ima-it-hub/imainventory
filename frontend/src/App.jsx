@@ -1931,6 +1931,10 @@ function App() {
                 orders={orders}
                 deliverySchedule={deliverySchedule}
                 onStatusChange={handleOrderStatusChange}
+                onFetchOrderDetails={handleFetchOrderDetails}
+                onSavePhysicalQuantities={handleSaveOrderPhysicalQuantities}
+                authenticatedEmployeeId={authenticatedEmployeeId}
+                selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
               />
             ) : activeView === 'transfer' ? (
               <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">

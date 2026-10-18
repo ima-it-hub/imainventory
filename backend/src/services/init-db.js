@@ -74,6 +74,7 @@ async function initializeDatabase() {
       id SERIAL PRIMARY KEY,
       wilaya VARCHAR(100) NOT NULL,
       day VARCHAR(20) NOT NULL CHECK (day IN ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')),
+      warehouse_name VARCHAR(255),
       driver_id INTEGER REFERENCES drivers(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -239,6 +240,7 @@ async function initializeDatabase() {
   await query(physicalCountsTable);
   await query(driversTable);
   await query(deliveryScheduleTable);
+  await query('ALTER TABLE delivery_schedule ADD COLUMN IF NOT EXISTS warehouse_name VARCHAR(255);');
   await query(usersTable);
   await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS working_warehouse VARCHAR(255);');
   await query(logisticsOrdersTable);

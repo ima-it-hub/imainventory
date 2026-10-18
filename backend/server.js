@@ -558,12 +558,16 @@ app.get('/api/employees', async (req, res) => {
 
 app.get('/api/delivery-schedule', async (req, res) => {
   try {
+    const warehouse = String(req.query.warehouse || '').trim();
+    if (!warehouse) return res.json({ routes: [], count: 0, warehouse: null });
+
     const routes = await query(`
-      SELECT id, wilaya, day, COALESCE(driver_id::text, '') AS "driverId"
+      SELECT id, wilaya, day, warehouse_name AS "warehouseName", COALESCE(driver_id::text, '') AS "driverId"
       FROM delivery_schedule
+      WHERE LOWER(TRIM(warehouse_name)) = LOWER(TRIM($1))
       ORDER BY ARRAY_POSITION(ARRAY['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'], day), wilaya, id;
-    `);
-    res.json({ routes, count: routes.length });
+    `, [warehouse]);
+    res.json({ routes, count: routes.length, warehouse });
   } catch (error) {
     console.error('Delivery schedule fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch delivery schedule', details: error.message });
@@ -574,22 +578,23 @@ app.post('/api/delivery-schedule', async (req, res) => {
   try {
     const wilaya = String(req.body?.wilaya || '').trim();
     const day = String(req.body?.day || '').trim();
+    const warehouse = String(req.body?.warehouse || '').trim();
     const driverValue = String(req.body?.driverId || '').trim();
     const driverId = driverValue ? Number(driverValue) : null;
     const validDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-    if (!wilaya || !validDays.includes(day)) {
-      return res.status(400).json({ error: 'Select a wilaya and a valid day for the delivery route.' });
+    if (!wilaya || !warehouse || !validDays.includes(day)) {
+      return res.status(400).json({ error: 'Select a warehouse, wilaya, and valid day for the delivery route.' });
     }
     if (driverId !== null && (!Number.isInteger(driverId) || driverId <= 0)) {
       return res.status(400).json({ error: 'Select a valid driver.' });
     }
 
     const rows = await query(`
-      INSERT INTO delivery_schedule (wilaya, day, driver_id)
-      VALUES ($1, $2, $3)
-      RETURNING id, wilaya, day, COALESCE(driver_id::text, '') AS "driverId";
-    `, [wilaya, day, driverId]);
+      INSERT INTO delivery_schedule (wilaya, day, warehouse_name, driver_id)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id, wilaya, day, warehouse_name AS "warehouseName", COALESCE(driver_id::text, '') AS "driverId";
+    `, [wilaya, day, warehouse, driverId]);
     res.status(201).json({ route: rows[0] });
   } catch (error) {
     if (error.code === '23503') return res.status(400).json({ error: 'Select an existing driver.' });
@@ -601,10 +606,16 @@ app.post('/api/delivery-schedule', async (req, res) => {
 app.delete('/api/delivery-schedule/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const warehouse = String(req.query.warehouse || '').trim();
     if (!Number.isInteger(id) || id <= 0) {
       return res.status(400).json({ error: 'Delivery route id must be a positive integer.' });
     }
-    const rows = await query('DELETE FROM delivery_schedule WHERE id = $1 RETURNING id;', [id]);
+    if (!warehouse) return res.status(400).json({ error: 'A warehouse is required to delete a delivery route.' });
+    const rows = await query(`
+      DELETE FROM delivery_schedule
+      WHERE id = $1 AND LOWER(TRIM(warehouse_name)) = LOWER(TRIM($2))
+      RETURNING id;
+    `, [id, warehouse]);
     if (!rows.length) return res.status(404).json({ error: 'Delivery route not found.' });
     res.json({ deleted: rows[0] });
   } catch (error) {

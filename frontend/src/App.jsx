@@ -187,7 +187,12 @@ function App() {
 
     async function loadDeliverySchedule() {
       try {
-        const response = await fetch(`${API_URL}/api/delivery-schedule`)
+        const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+        if (!warehouse) {
+          if (isMounted) setDeliverySchedule([])
+          return
+        }
+        const response = await fetch(`${API_URL}/api/delivery-schedule?warehouse=${encodeURIComponent(warehouse)}`)
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Unable to load delivery schedule')
 
@@ -208,6 +213,7 @@ function App() {
               wilaya: route.wilaya,
               day: route.day,
               driverId: route.driverId || '',
+              warehouse,
             }
             let migrationResponse = await fetch(`${API_URL}/api/delivery-schedule`, {
               method: 'POST',
@@ -244,7 +250,7 @@ function App() {
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [selectedWarehouse, currentUser?.workingWarehouse])
 
   useEffect(() => {
     try {
@@ -567,6 +573,7 @@ function App() {
           wilaya: scheduleForm.wilaya.trim(),
           day: scheduleForm.day,
           driverId: scheduleForm.driverId || '',
+          warehouse: String(selectedWarehouse || currentUser?.workingWarehouse || '').trim(),
         }),
       })
       const data = await response.json()
@@ -582,7 +589,8 @@ function App() {
   async function handleDeleteDeliverySlot(id) {
     setError('')
     try {
-      const response = await fetch(`${API_URL}/api/delivery-schedule/${id}`, { method: 'DELETE' })
+      const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+      const response = await fetch(`${API_URL}/api/delivery-schedule/${id}?warehouse=${encodeURIComponent(warehouse)}`, { method: 'DELETE' })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to delete delivery route')
       setDeliverySchedule((current) => current.filter((route) => route.id !== id))
@@ -1331,7 +1339,9 @@ function App() {
           const data = await response.json()
           if (response.ok) setDrivers(data.drivers || [])
         } else if (activeView === 'schedule') {
-          const response = await fetch(`${API_URL}/api/delivery-schedule`)
+          const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+          if (!warehouse) return
+          const response = await fetch(`${API_URL}/api/delivery-schedule?warehouse=${encodeURIComponent(warehouse)}`)
           const data = await response.json()
           if (response.ok) setDeliverySchedule(data.routes || [])
         }
@@ -1774,7 +1784,7 @@ function App() {
                 </div>
               </div>
 
-              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'qr-scan' ? (
+              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'qr-scan' || activeView === 'schedule' ? (
                 <div className="header-actions hidden items-center gap-3 md:flex">
                   <select
                     value={selectedWarehouse}

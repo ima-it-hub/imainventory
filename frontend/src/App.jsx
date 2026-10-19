@@ -30,6 +30,7 @@ import DriversManagement from './components/DriversManagement'
 import DeliverySchedule from './components/DeliverySchedule'
 import UserAccessManagement from './components/UserAccessManagement'
 import AssetManagement from './components/AssetManagement'
+import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL
@@ -66,6 +67,7 @@ function App() {
   const [query, setQuery] = useState('')
   const [items, setItems] = useState([])
   const [selectedItem, setSelectedItem] = useState(null)
+  const [itemDetailsOpen, setItemDetailsOpen] = useState(false)
   const [auditHistory, setAuditHistory] = useState([])
   const [auditHistoryLoading, setAuditHistoryLoading] = useState(false)
   const [auditHistoryError, setAuditHistoryError] = useState('')
@@ -618,7 +620,7 @@ function App() {
     }
   }
 
-  function handlePrintLabel() {
+  function handlePrintLabel(qrElement = qrRef.current) {
     if (!selectedItem) {
       setError('Select an item before printing its QR label.')
       return
@@ -630,7 +632,7 @@ function App() {
       return
     }
 
-    const qrMarkup = qrRef.current ? new XMLSerializer().serializeToString(qrRef.current) : ''
+    const qrMarkup = qrElement ? new XMLSerializer().serializeToString(qrElement) : ''
 
     if (!qrMarkup) {
       setError('The QR code is not ready to print yet. Please try again.')
@@ -1015,7 +1017,7 @@ function App() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Search failed')
       setItems(data.items || [])
-      if (!term) setSelectedItem(null)
+      if (!term && !silent) setSelectedItem(null)
     } catch (err) {
       if (!silent) setError(err.message)
     } finally {
@@ -2301,7 +2303,18 @@ function App() {
                               onClick={() => {
                                 setSelectedItem(item)
                                 setResult(null)
+                                setItemDetailsOpen(true)
                               }}
+                              onKeyDown={(event) => {
+                                if (event.target === event.currentTarget && event.key === 'Enter') {
+                                  event.preventDefault()
+                                  setSelectedItem(item)
+                                  setResult(null)
+                                  setItemDetailsOpen(true)
+                                }
+                              }}
+                              tabIndex={0}
+                              aria-label={`View audit log and QR code for ${item.name}`}
                               className={`grid w-full grid-cols-[2.1fr_0.9fr_0.7fr_0.8fr_0.7fr_0.8fr_1fr_0.5fr] gap-3 border-t border-slate-200 bg-white px-4 py-3 text-left text-[14px] transition hover:bg-sky-50 ${selectedItem?.id === item.id ? 'bg-sky-50' : ''}`}
                             >
                               <span className="font-medium text-slate-800">{item.name}</span>
@@ -2329,7 +2342,8 @@ function App() {
                               <span className="truncate text-slate-700" title={item.last_counted_employee || 'Not counted'}>{item.last_counted_employee || '—'}</span>
                               <button
                                 type="button"
-                                onClick={() => {
+                                onClick={(event) => {
+                                  event.stopPropagation()
                                   setSelectedItem(item)
                                   handleReconcile(item, physicalValue)
                                 }}
@@ -2436,6 +2450,18 @@ function App() {
                     </div>
                   </div>
                 </section>
+                {itemDetailsOpen && selectedItem && (
+                  <InventoryItemDetailsDialog
+                    item={selectedItem}
+                    qrValue={qrValue}
+                    auditHistory={auditHistory}
+                    auditHistoryLoading={auditHistoryLoading}
+                    auditHistoryError={auditHistoryError}
+                    result={result}
+                    onClose={() => setItemDetailsOpen(false)}
+                    onPrintLabel={handlePrintLabel}
+                  />
+                )}
               </>
             ) : (
               <LogisticsOrders

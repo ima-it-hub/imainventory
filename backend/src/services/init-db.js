@@ -93,6 +93,47 @@ async function initializeDatabase() {
     );
   `;
 
+  const teamTasksTable = `
+    CREATE TABLE IF NOT EXISTS team_tasks (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      assignee_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
+  const teamTaskCommentsTable = `
+    CREATE TABLE IF NOT EXISTS team_task_comments (
+      id SERIAL PRIMARY KEY,
+      task_id INTEGER NOT NULL REFERENCES team_tasks(id) ON DELETE CASCADE,
+      author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
+  const teamTaskReadsTable = `
+    CREATE TABLE IF NOT EXISTS team_task_reads (
+      task_id INTEGER NOT NULL REFERENCES team_tasks(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      last_viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (task_id, user_id)
+    );
+  `;
+
+  const appSessionsTable = `
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      session_token VARCHAR(128) PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
   const logisticsOrdersTable = `
     CREATE TABLE IF NOT EXISTS logistics_orders (
       id SERIAL PRIMARY KEY,
@@ -242,6 +283,10 @@ async function initializeDatabase() {
   await query(deliveryScheduleTable);
   await query('ALTER TABLE delivery_schedule ADD COLUMN IF NOT EXISTS warehouse_name VARCHAR(255);');
   await query(usersTable);
+  await query(appSessionsTable);
+  await query(teamTasksTable);
+  await query(teamTaskCommentsTable);
+  await query(teamTaskReadsTable);
   await query('ALTER TABLE users ADD COLUMN IF NOT EXISTS working_warehouse VARCHAR(255);');
   await query(logisticsOrdersTable);
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS warehouse_name VARCHAR(255);');

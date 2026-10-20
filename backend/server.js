@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const crypto = require('node:crypto');
 const {
   query,
   getItemBySearch,
@@ -22,7 +23,13 @@ const {
   serializeOrderDetailSnapshots,
 } = require('./src/lib/logistics-order-details');
 const { initializeDatabase } = require('./src/services/init-db');
-const { ADMIN_CREDENTIALS, sanitizeAllowedPages, VALID_PAGES } = require('./src/lib/access');
+const {
+  ADMIN_CREDENTIALS,
+  sanitizeAllowedPages,
+  VALID_PAGES,
+  canViewTeamTask,
+  canCommentOnTeamTask,
+} = require('./src/lib/access');
 const config = require('./src/config');
 
 const app = express();
@@ -56,6 +63,40 @@ function normalizeJsonValue(value) {
   }
 
   return value;
+}
+
+async function getTaskSessionUser(req) {
+  const token = String(req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+  if (!token) return null;
+
+  const rows = await query(`
+    SELECT users.id, users.role, users.allowed_pages AS "allowedPages"
+    FROM app_sessions sessions
+    INNER JOIN users ON users.id = sessions.user_id
+    WHERE sessions.session_token = $1 AND sessions.expires_at > NOW()
+    LIMIT 1;
+  `, [token]);
+  return rows[0] || null;
+}
+
+function canUseTeamTasks(user) {
+  return user?.role === 'admin' || (Array.isArray(user?.allowedPages) && user.allowedPages.includes('team-tasks'));
+}
+
+async function getTeamTaskForViewer(taskId, viewer) {
+  const rows = await query(`
+    SELECT id, assignee_user_id AS "assigneeUserId", created_by_user_id AS "createdByUserId"
+    FROM team_tasks WHERE id = $1 LIMIT 1;
+  `, [taskId]);
+  if (!rows.length) return { error: 'Task not found.', status: 404 };
+
+  const task = rows[0];
+  const isAssignee = Number(task.assigneeUserId) === Number(viewer.id);
+  if (!canViewTeamTask(viewer, task)) {
+    return { error: 'You do not have access to this task.', status: 403 };
+  }
+
+  return { task, isAssignee };
 }
 
 app.get('/api/health', (req, res) => {
@@ -407,6 +448,12 @@ app.post('/api/auth/login', async (req, res) => {
       allowedPages: Array.isArray(user.allowed_pages) ? sanitizeAllowedPages(user.allowed_pages) : [],
       workingWarehouse: String(user.working_warehouse || '').trim(),
     };
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    await query(`
+      INSERT INTO app_sessions (session_token, user_id, expires_at)
+      VALUES ($1, $2, NOW() + INTERVAL '30 days');
+    `, [sessionToken, user.id]);
+    safeUser.sessionToken = sessionToken;
 
     res.json({ user: safeUser, message: 'Login successful.' });
   } catch (error) {
@@ -431,6 +478,245 @@ app.get('/api/users', async (req, res) => {
   } catch (error) {
     console.error('Users fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch users', details: error.message });
+  }
+});
+
+app.delete('/api/auth/session', async (req, res) => {
+  try {
+    const token = String(req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
+    if (token) await query('DELETE FROM app_sessions WHERE session_token = $1;', [token]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Session revocation failed:', error);
+    res.status(500).json({ error: 'Unable to revoke session', details: error.message });
+  }
+});
+
+app.get('/api/team-tasks', async (req, res) => {
+  try {
+    const viewer = await getTaskSessionUser(req);
+    if (!viewer) return res.status(401).json({ error: 'Sign in to access team tasks.' });
+    if (!canUseTeamTasks(viewer)) return res.status(403).json({ error: 'You do not have access to team tasks.' });
+    const visibilityClause = viewer.role === 'admin'
+      ? ''
+      : 'WHERE task.assignee_user_id = $1 OR task.created_by_user_id = $1';
+    const params = [viewer.id];
+    const tasks = await query(`
+      SELECT
+        task.id,
+        task.title,
+        task.description,
+        task.status,
+        task.assignee_user_id AS "assigneeUserId",
+        COALESCE(assignee.full_name, assignee.username) AS "assigneeName",
+        task.created_by_user_id AS "createdByUserId",
+        COALESCE(creator.full_name, creator.username, 'Unknown user') AS "createdByName",
+        EXISTS (
+          SELECT 1
+          FROM team_task_comments unread_comment
+          LEFT JOIN team_task_reads task_read
+            ON task_read.task_id = task.id AND task_read.user_id = $1
+          WHERE unread_comment.task_id = task.id
+            AND unread_comment.author_user_id IS DISTINCT FROM $1
+            AND unread_comment.created_at > COALESCE(task_read.last_viewed_at, '-infinity'::timestamptz)
+        ) AS "hasUnreadComments",
+        task.created_at AS "createdAt",
+        task.updated_at AS "updatedAt"
+      FROM team_tasks task
+      LEFT JOIN users assignee ON assignee.id = task.assignee_user_id
+      LEFT JOIN users creator ON creator.id = task.created_by_user_id
+      ${visibilityClause}
+      ORDER BY task.updated_at DESC, task.id DESC;
+    `, params);
+
+    res.json({ tasks, count: tasks.length });
+  } catch (error) {
+    console.error('Team tasks fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch team tasks', details: error.message });
+  }
+});
+
+app.get('/api/team-tasks/summary', async (req, res) => {
+  try {
+    const viewer = await getTaskSessionUser(req);
+    if (!viewer) return res.status(401).json({ error: 'Sign in to view team task counts.' });
+    if (!canUseTeamTasks(viewer)) return res.status(403).json({ error: 'You do not have access to team tasks.' });
+
+    const assigneeClause = viewer.role === 'admin' ? '' : 'AND assignee_user_id = $1';
+    const rows = await query(`
+      SELECT COUNT(*)::integer AS "todoCount"
+      FROM team_tasks
+      WHERE status = 'todo' ${assigneeClause};
+    `, viewer.role === 'admin' ? [] : [viewer.id]);
+    res.json({ todoCount: rows[0]?.todoCount || 0 });
+  } catch (error) {
+    console.error('Team task summary fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch team task summary', details: error.message });
+  }
+});
+
+app.post('/api/team-tasks', async (req, res) => {
+  try {
+    const viewer = await getTaskSessionUser(req);
+    if (!viewer) return res.status(401).json({ error: 'Sign in to create team tasks.' });
+    if (!canUseTeamTasks(viewer)) return res.status(403).json({ error: 'You do not have access to team tasks.' });
+
+    const title = String(req.body?.title || '').trim();
+    const description = String(req.body?.description || '').trim();
+    const assigneeUserId = Number(req.body?.assigneeUserId);
+    const createdByUserId = Number(viewer.id);
+
+    if (!title || title.length > 255) {
+      return res.status(400).json({ error: 'Enter a task title of at most 255 characters.' });
+    }
+    if (!Number.isInteger(assigneeUserId) || assigneeUserId <= 0) {
+      return res.status(400).json({ error: 'Choose a valid assignee.' });
+    }
+
+    const users = await query('SELECT id FROM users WHERE id = ANY($1::integer[]);', [[assigneeUserId, createdByUserId]]);
+    if (!users.some((user) => Number(user.id) === assigneeUserId)
+      || !users.some((user) => Number(user.id) === createdByUserId)) {
+      return res.status(400).json({ error: 'The creator or assignee account was not found.' });
+    }
+
+    const inserted = await query(`
+      INSERT INTO team_tasks (title, description, assignee_user_id, created_by_user_id)
+      VALUES ($1, $2, $3, $4)
+      RETURNING id;
+    `, [title, description, assigneeUserId, createdByUserId]);
+    const rows = await query(`
+      SELECT
+        task.id, task.title, task.description, task.status,
+        task.assignee_user_id AS "assigneeUserId",
+        COALESCE(assignee.full_name, assignee.username) AS "assigneeName",
+        task.created_by_user_id AS "createdByUserId",
+        COALESCE(creator.full_name, creator.username, 'Unknown user') AS "createdByName",
+        task.created_at AS "createdAt", task.updated_at AS "updatedAt"
+      FROM team_tasks task
+      LEFT JOIN users assignee ON assignee.id = task.assignee_user_id
+      LEFT JOIN users creator ON creator.id = task.created_by_user_id
+      WHERE task.id = $1;
+    `, [inserted[0].id]);
+
+    res.status(201).json({ task: rows[0] });
+  } catch (error) {
+    console.error('Team task creation failed:', error);
+    res.status(500).json({ error: 'Unable to create team task', details: error.message });
+  }
+});
+
+app.patch('/api/team-tasks/:id/status', async (req, res) => {
+  try {
+    const viewer = await getTaskSessionUser(req);
+    if (!viewer) return res.status(401).json({ error: 'Sign in to update team tasks.' });
+    if (!canUseTeamTasks(viewer)) return res.status(403).json({ error: 'You do not have access to team tasks.' });
+
+    const taskId = Number(req.params.id);
+    const status = String(req.body?.status || '').trim();
+    const validStatuses = ['todo', 'in_progress', 'done'];
+
+    if (!Number.isInteger(taskId) || taskId <= 0
+      || !validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Provide a valid task and status.' });
+    }
+
+    const taskRows = await query('SELECT id, assignee_user_id FROM team_tasks WHERE id = $1 LIMIT 1;', [taskId]);
+    if (!taskRows.length) return res.status(404).json({ error: 'Task not found.' });
+    if (viewer.role !== 'admin' && Number(taskRows[0].assignee_user_id) !== Number(viewer.id)) {
+      return res.status(403).json({ error: 'Only the assignee or an admin can change this task status.' });
+    }
+
+    const updatedRows = await query(`
+      UPDATE team_tasks
+      SET status = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING id, title, description, status,
+        assignee_user_id AS "assigneeUserId",
+        created_by_user_id AS "createdByUserId",
+        created_at AS "createdAt", updated_at AS "updatedAt";
+    `, [status, taskId]);
+    res.json({ task: updatedRows[0] });
+  } catch (error) {
+    console.error('Team task status update failed:', error);
+    res.status(500).json({ error: 'Unable to update team task status', details: error.message });
+  }
+});
+
+app.get('/api/team-tasks/:id/comments', async (req, res) => {
+  try {
+    const viewer = await getTaskSessionUser(req);
+    if (!viewer) return res.status(401).json({ error: 'Sign in to access task comments.' });
+    if (!canUseTeamTasks(viewer)) return res.status(403).json({ error: 'You do not have access to team tasks.' });
+
+    const taskId = Number(req.params.id);
+    if (!Number.isInteger(taskId) || taskId <= 0) return res.status(400).json({ error: 'Invalid task ID.' });
+    const access = await getTeamTaskForViewer(taskId, viewer);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+
+    const comments = await query(`
+      SELECT
+        comment.id,
+        comment.comment,
+        comment.author_user_id AS "authorUserId",
+        COALESCE(author.full_name, author.username, 'Former user') AS "authorName",
+        comment.created_at AS "createdAt"
+      FROM team_task_comments comment
+      LEFT JOIN users author ON author.id = comment.author_user_id
+      WHERE comment.task_id = $1
+      ORDER BY comment.created_at ASC, comment.id ASC;
+    `, [taskId]);
+    await query(`
+      INSERT INTO team_task_reads (task_id, user_id, last_viewed_at)
+      VALUES ($1, $2, COALESCE($3, NOW()))
+      ON CONFLICT (task_id, user_id) DO UPDATE
+      SET last_viewed_at = EXCLUDED.last_viewed_at;
+    `, [taskId, viewer.id, comments.at(-1)?.createdAt || null]);
+    res.json({ comments, count: comments.length });
+  } catch (error) {
+    console.error('Team task comments fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch task comments', details: error.message });
+  }
+});
+
+app.post('/api/team-tasks/:id/comments', async (req, res) => {
+  try {
+    const viewer = await getTaskSessionUser(req);
+    if (!viewer) return res.status(401).json({ error: 'Sign in to comment on tasks.' });
+    if (!canUseTeamTasks(viewer)) return res.status(403).json({ error: 'You do not have access to team tasks.' });
+
+    const taskId = Number(req.params.id);
+    const body = String(req.body?.comment || '').trim();
+    if (!Number.isInteger(taskId) || taskId <= 0 || !body || body.length > 5000) {
+      return res.status(400).json({ error: 'Enter a comment of at most 5,000 characters.' });
+    }
+
+    const access = await getTeamTaskForViewer(taskId, viewer);
+    if (access.error) return res.status(access.status).json({ error: access.error });
+    if (!canCommentOnTeamTask(viewer, access.task)) {
+      return res.status(403).json({ error: 'Only the assignee, creator, or an admin can comment on this task.' });
+    }
+
+    const inserted = await query(`
+      INSERT INTO team_task_comments (task_id, author_user_id, comment)
+      VALUES ($1, $2, $3)
+      RETURNING id;
+    `, [taskId, viewer.id, body]);
+    await query('UPDATE team_tasks SET updated_at = NOW() WHERE id = $1;', [taskId]);
+    const rows = await query(`
+      SELECT
+        task_comment.id,
+        task_comment.comment,
+        task_comment.author_user_id AS "authorUserId",
+        COALESCE(author.full_name, author.username, 'Former user') AS "authorName",
+        task_comment.created_at AS "createdAt"
+      FROM team_task_comments task_comment
+      LEFT JOIN users author ON author.id = task_comment.author_user_id
+      WHERE task_comment.id = $1;
+    `, [inserted[0].id]);
+    res.status(201).json({ comment: rows[0] });
+  } catch (error) {
+    console.error('Team task comment creation failed:', error);
+    res.status(500).json({ error: 'Unable to add task comment', details: error.message });
   }
 });
 

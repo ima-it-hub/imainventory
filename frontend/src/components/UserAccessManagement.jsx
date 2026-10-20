@@ -6,6 +6,7 @@ const pageDefinitions = [
   { key: 'qr-scan', label: 'QR scan' },
   { key: 'logistics', label: 'Logistics' },
   { key: 'status-dashboard', label: 'Status dashboard' },
+  { key: 'team-tasks', label: 'To-do list' },
   { key: 'transfer', label: 'Transfer' },
   { key: 'drivers', label: 'Drivers' },
   { key: 'schedule', label: 'Delivery plan' },

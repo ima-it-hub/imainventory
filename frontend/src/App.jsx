@@ -30,6 +30,7 @@ import DriversManagement from './components/DriversManagement'
 import DeliverySchedule from './components/DeliverySchedule'
 import UserAccessManagement from './components/UserAccessManagement'
 import AssetManagement from './components/AssetManagement'
+import TeamTasks from './components/TeamTasks'
 import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
 import './App.css'
 
@@ -79,7 +80,7 @@ function App() {
       const saved = localStorage.getItem(AUTH_SESSION_KEY)
       if (!saved) return null
       const parsed = JSON.parse(saved)
-      return parsed?.currentUser || null
+      return parsed?.currentUser?.sessionToken ? parsed.currentUser : null
     } catch {
       return null
     }
@@ -90,11 +91,12 @@ function App() {
       const saved = localStorage.getItem(AUTH_SESSION_KEY)
       if (!saved) return false
       const parsed = JSON.parse(saved)
-      return Boolean(parsed?.isAuthenticated)
+      return Boolean(parsed?.isAuthenticated && parsed?.currentUser?.sessionToken)
     } catch {
       return false
     }
   })
+  const [teamTodoCount, setTeamTodoCount] = useState(0)
   const [users, setUsers] = useState([])
   const [physicalQuantities, setPhysicalQuantities] = useState({})
   const [result, setResult] = useState(null)
@@ -272,6 +274,39 @@ function App() {
   }, [isAuthenticated, currentUser, allowedPages, activeView])
 
   useEffect(() => {
+    if (!isAuthenticated || !currentUser?.sessionToken) return undefined
+
+    let active = true
+    async function refreshTodoCount() {
+      try {
+        const response = await fetch(`${API_URL}/api/team-tasks/summary`, {
+          headers: { Authorization: `Bearer ${currentUser.sessionToken}` },
+        })
+        if (!response.ok) return
+        const data = await response.json()
+        if (active) setTeamTodoCount(Number(data.todoCount) || 0)
+      } catch {
+        // Keep the last known count while the API is temporarily unavailable.
+      }
+    }
+
+    function handleVisibilityChange() {
+      if (!document.hidden) refreshTodoCount()
+    }
+
+    refreshTodoCount()
+    const intervalId = window.setInterval(refreshTodoCount, 10000)
+    window.addEventListener('focus', refreshTodoCount)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      active = false
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', refreshTodoCount)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [isAuthenticated, currentUser?.sessionToken])
+
+  useEffect(() => {
     if (!selectedItem?.id) return undefined
 
     const controller = new AbortController()
@@ -310,6 +345,7 @@ function App() {
     { key: 'drivers', label: 'Drivers', icon: UserRound },
     { key: 'schedule', label: 'Delivery plan', icon: CalendarRange },
     { key: 'assets', label: 'Assets', icon: Boxes },
+    { key: 'team-tasks', label: 'To-do list', icon: ClipboardList },
     { key: 'access', label: 'Access', icon: KeyRound },
   ]
 
@@ -1100,7 +1136,7 @@ function App() {
       if (!response.ok) throw new Error(data.error || 'Unable to update user')
 
       if (currentUser && currentUser.id === userId) {
-        setCurrentUser(data.user)
+        setCurrentUser({ ...data.user, sessionToken: currentUser.sessionToken })
         setAllowedPages(data.user.allowedPages || [])
         if (data.user.workingWarehouse) {
           setSelectedWarehouse((current) => String(current || '').trim() || data.user.workingWarehouse)
@@ -1677,7 +1713,7 @@ function App() {
   }
 
   const visibleSidebarPages = sidebarPages.filter((page) => {
-    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'status-dashboard'].includes(page.key)
+    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'status-dashboard', 'team-tasks'].includes(page.key)
     return isAdminVisiblePage
       ? currentUser?.role === 'admin' || allowedPages.includes(page.key)
       : allowedPages.includes(page.key)
@@ -1710,6 +1746,11 @@ function App() {
                   >
                     <Icon className="h-4 w-4" />
                     {page.label}
+                    {page.key === 'team-tasks' && teamTodoCount > 0 ? (
+                      <span aria-label={`${teamTodoCount} to-do tasks`} className="ml-auto min-w-5 rounded-full bg-emerald-500 px-1.5 py-0.5 text-center text-[10px] font-bold text-white">
+                        {teamTodoCount > 99 ? '99+' : teamTodoCount}
+                      </span>
+                    ) : null}
                   </button>
                 )
               })}
@@ -1718,9 +1759,20 @@ function App() {
             <div className="border-t border-slate-700/80 p-2">
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
+                  if (currentUser?.sessionToken) {
+                    try {
+                      await fetch(`${API_URL}/api/auth/session`, {
+                        method: 'DELETE',
+                        headers: { Authorization: `Bearer ${currentUser.sessionToken}` },
+                      })
+                    } catch {
+                      // Sign-out still clears the browser session if the API is unavailable.
+                    }
+                  }
                   setIsAuthenticated(false)
                   setCurrentUser(null)
+                  setTeamTodoCount(0)
                   setAllowedPages(['inventory', 'logistics', 'transfer', 'drivers', 'schedule'])
                   setActiveView('inventory')
                   setError('')
@@ -1775,6 +1827,8 @@ function App() {
                                 ? 'Transfer Management'
                                         : activeView === 'status-dashboard'
                                           ? 'Order Status Dashboard'
+                                            : activeView === 'team-tasks'
+                                              ? 'Team To-do list'
                                 : 'Logistics Management'}
                   </h1>
                 </div>
@@ -1850,6 +1904,8 @@ function App() {
 
             {activeView === 'assets' ? (
               <AssetManagement apiUrl={API_URL} />
+            ) : activeView === 'team-tasks' ? (
+              <TeamTasks apiUrl={API_URL} currentUser={currentUser} users={users} />
             ) : activeView === 'access' ? (
               <UserAccessManagement
                 users={users}

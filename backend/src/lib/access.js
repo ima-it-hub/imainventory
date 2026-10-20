@@ -1,4 +1,4 @@
-const VALID_PAGES = ['inventory', 'logistics', 'status-dashboard', 'transfer', 'drivers', 'schedule', 'qr-scan', 'assets'];
+const VALID_PAGES = ['inventory', 'logistics', 'status-dashboard', 'team-tasks', 'transfer', 'drivers', 'schedule', 'qr-scan', 'assets'];
 
 const ADMIN_CREDENTIALS = {
   username: 'admin',
@@ -31,9 +31,25 @@ function canAccessPage(page, allowedPages = []) {
   return allowed.includes(normalizedPage);
 }
 
+function canViewTeamTask(user, task) {
+  if (!user || !task) return false;
+  return user.role === 'admin'
+    || Number(user.id) === Number(task.assigneeUserId)
+    || Number(user.id) === Number(task.createdByUserId);
+}
+
+function canCommentOnTeamTask(user, task) {
+  if (!user || !task) return false;
+  return user.role === 'admin'
+    || Number(user.id) === Number(task.assigneeUserId)
+    || Number(user.id) === Number(task.createdByUserId);
+}
+
 module.exports = {
   VALID_PAGES,
   ADMIN_CREDENTIALS,
   sanitizeAllowedPages,
   canAccessPage,
+  canViewTeamTask,
+  canCommentOnTeamTask,
 };

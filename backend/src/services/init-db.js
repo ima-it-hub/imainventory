@@ -314,6 +314,15 @@ async function initializeDatabase() {
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS warehouse_id INTEGER;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS ready_at TIMESTAMP;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;');
+  await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS packing_started_at TIMESTAMPTZ;');
+  await query(`
+    DO $$ BEGIN
+      ALTER TABLE logistics_orders
+      ALTER COLUMN packing_started_at TYPE TIMESTAMPTZ
+      USING packing_started_at AT TIME ZONE COALESCE(current_setting('TIMEZONE', true), 'UTC');
+    EXCEPTION WHEN others THEN NULL;
+    END $$;
+  `);
   await query(logisticsOrderPhysicalCountsTable);
   await query(logisticsOrderDetailsTable);
   await query(logisticsTransferStatusesTable);

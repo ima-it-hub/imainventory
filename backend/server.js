@@ -1001,6 +1001,18 @@ app.get('/api/logistics/orders', async (req, res) => {
           WHEN lo.delivered_at IS NOT NULL THEN EXTRACT(EPOCH FROM (lo.delivered_at - lo.created_at))
           ELSE NULL
         END AS "pendingToDeliveredSeconds",
+        lo.packing_started_at AS "packingStartedAt",
+        CASE
+          WHEN lo.packing_started_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM lo.packing_started_at)::bigint
+          ELSE NULL
+        END AS "packingStartedAtEpoch",
+        CASE
+          WHEN lo.packing_started_at IS NOT NULL AND lo.ready_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (lo.ready_at - lo.packing_started_at))
+          ELSE NULL
+        END AS "packingDurationSeconds",
+        lo.ready_at AS "readyAt",
         COALESCE(prepared_employee.name, lo.employee_prepared) AS "preparedBy",
         counts.controller_employee_id AS "controllerEmployeeId",
         COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy",
@@ -1878,8 +1890,15 @@ app.put('/api/logistics/orders/:id', async (req, res) => {
       const normalizedStatus = String(status).trim();
       updates.push('status = $' + (params.length + 1));
       params.push(normalizedStatus);
+      if (normalizedStatus === 'Packing') {
+        updates.push('packing_started_at = NOW()');
+      }
+      if (normalizedStatus === 'Pending') {
+        updates.push('packing_started_at = NULL');
+      }
       if (normalizedStatus === 'Ready') {
         updates.push('ready_at = COALESCE(ready_at, NOW())');
+        updates.push('packing_started_at = COALESCE(packing_started_at, NOW())');
       }
       if (normalizedStatus === 'Delivered') {
         updates.push('delivered_at = COALESCE(delivered_at, NOW())');
@@ -1912,6 +1931,18 @@ app.put('/api/logistics/orders/:id', async (req, res) => {
         status,
         employee_prepared AS "employeePrepared",
         driver_id AS "driverId",
+        packing_started_at AS "packingStartedAt",
+        CASE
+          WHEN packing_started_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM packing_started_at)::bigint
+          ELSE NULL
+        END AS "packingStartedAtEpoch",
+        CASE
+          WHEN packing_started_at IS NOT NULL AND ready_at IS NOT NULL
+          THEN EXTRACT(EPOCH FROM (ready_at - packing_started_at))
+          ELSE NULL
+        END AS "packingDurationSeconds",
+        ready_at AS "readyAt",
         CASE
           WHEN ready_at IS NOT NULL THEN EXTRACT(EPOCH FROM (ready_at - created_at))
           ELSE NULL

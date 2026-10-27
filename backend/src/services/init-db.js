@@ -201,6 +201,27 @@ async function initializeDatabase() {
     );
   `;
 
+  const demandTransfersTable = `
+    CREATE TABLE IF NOT EXISTS demand_transfers (
+      id SERIAL PRIMARY KEY,
+      order_number VARCHAR(100) NOT NULL,
+      detail_key TEXT NOT NULL,
+      product_label VARCHAR(255) NOT NULL DEFAULT '',
+      system_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
+      physical_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
+      difference_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
+      requesting_warehouse VARCHAR(255) NOT NULL,
+      source_warehouse VARCHAR(255) NOT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'accepted', 'doesnt_have', 'transferred')),
+      requested_by VARCHAR(100),
+      updated_by VARCHAR(100),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (order_number, detail_key)
+    );
+  `;
+
   const assetCategoriesTable = `
     CREATE TABLE IF NOT EXISTS asset_categories (
       id SERIAL PRIMARY KEY,
@@ -298,6 +319,15 @@ async function initializeDatabase() {
   await query(logisticsTransferStatusesTable);
   await query(logisticsTransfersTable);
   await query(logisticsTransferDetailsTable);
+  await query(demandTransfersTable);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_demand_transfers_source_status
+    ON demand_transfers (LOWER(TRIM(source_warehouse)), status);
+  `);
+  await query(`
+    CREATE INDEX IF NOT EXISTS idx_demand_transfers_order_number
+    ON demand_transfers (order_number);
+  `);
   await query(assetCategoriesTable);
   await query(assetPlacesTable);
   await query(assetsTable);

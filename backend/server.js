@@ -1205,13 +1205,30 @@ app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
       query('SELECT details FROM logistics_order_details WHERE order_number = $1', [orderNumber]),
       query('SELECT physical_quantities, control_quantities FROM logistics_order_physical_counts WHERE order_number = $1', [orderNumber]),
     ]);
+    let demandRows = [];
+    try {
+      demandRows = await query(`
+        SELECT detail_key AS "detailKey", source_warehouse AS "sourceWarehouse", status
+        FROM demand_transfers
+        WHERE order_number = $1
+          AND status IN ('pending', 'accepted')
+      `, [orderNumber]);
+    } catch (demandError) {
+      console.warn('Demand transfers lookup skipped:', demandError.message);
+    }
     const savedQuantities = savedRows[0]?.physical_quantities || {};
     const savedControlQuantities = savedRows[0]?.control_quantities || {};
+    const demandByKey = Object.fromEntries(
+      (demandRows || []).map((row) => [row.detailKey, row.sourceWarehouse]),
+    );
     const details = attachSavedOrderQuantities(
       detailRows[0]?.details || [],
       savedQuantities,
       savedControlQuantities,
-    );
+    ).map((detail) => ({
+      ...detail,
+      demandSourceWarehouse: demandByKey[detail.detailKey] || '',
+    }));
     const payload = JSON.stringify(
       { details, count: details.length },
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
@@ -1255,14 +1272,19 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
     const orderNumber = String(req.params.orderNumber);
     const input = req.body?.physicalQuantities;
     const controlInput = req.body?.controlQuantities || {};
+    const demandTransferInput = req.body?.demandTransfers || {};
     const employeePrepared = String(req.body?.employeePrepared || '').trim();
     const controllerEmployeeId = String(req.body?.controllerEmployeeId || '').trim();
+    const requestingWarehouse = String(req.body?.requestingWarehouse || '').trim();
 
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
       return res.status(400).json({ error: 'Physical quantities must be provided as an object.' });
     }
     if (typeof controlInput !== 'object' || Array.isArray(controlInput)) {
       return res.status(400).json({ error: 'Control quantities must be provided as an object.' });
+    }
+    if (typeof demandTransferInput !== 'object' || Array.isArray(demandTransferInput)) {
+      return res.status(400).json({ error: 'Demand transfers must be provided as an object.' });
     }
 
     const physicalQuantities = {};
@@ -1299,7 +1321,7 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
           ELSE employee_prepared
         END
         WHERE order_number = $1
-        RETURNING employee_prepared AS "employeePrepared"
+        RETURNING employee_prepared AS "employeePrepared", warehouse_name AS "warehouseName"
       ), saved_counts AS (
         INSERT INTO logistics_order_physical_counts (order_number, physical_quantities, control_quantities, controller_employee_id, updated_at)
         SELECT $1, $2::jsonb, $4::jsonb, NULLIF($5, ''), NOW()
@@ -1316,7 +1338,8 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
       SELECT
         saved_counts."updatedAt",
         saved_counts."controllerEmployeeId",
-        updated_order."employeePrepared"
+        updated_order."employeePrepared",
+        updated_order."warehouseName"
       FROM saved_counts
       CROSS JOIN updated_order;
     `, [orderNumber, JSON.stringify(physicalQuantities), assignedEmployee, JSON.stringify(controlQuantities), assignedController]);
@@ -1325,15 +1348,298 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
       return res.status(404).json({ error: 'Order not found.' });
     }
 
+    const orderWarehouse = requestingWarehouse || String(rows[0].warehouseName || '').trim();
+    const detailRows = await query('SELECT details FROM logistics_order_details WHERE order_number = $1', [orderNumber]);
+    const orderDetails = attachSavedOrderQuantities(
+      detailRows[0]?.details || [],
+      physicalQuantities,
+      controlQuantities,
+    );
+
+    const activeDemandKeys = [];
+    for (const detail of orderDetails) {
+      const systemQuantity = Number(detail.Quantity);
+      const physicalQuantity = Number(physicalQuantities[detail.detailKey]);
+      const sourceWarehouse = String(demandTransferInput[detail.detailKey] || '').trim();
+      if (
+        !sourceWarehouse
+        || !Number.isFinite(systemQuantity)
+        || !Number.isFinite(physicalQuantity)
+        || physicalQuantity >= systemQuantity
+      ) {
+        continue;
+      }
+
+      const differenceQuantity = systemQuantity - physicalQuantity;
+      if (differenceQuantity <= 0) continue;
+      if (!orderWarehouse) {
+        return res.status(400).json({ error: 'A requesting warehouse is required to create demand transfers.' });
+      }
+      if (sourceWarehouse.toLowerCase() === orderWarehouse.toLowerCase()) {
+        return res.status(400).json({ error: 'Demand transfer source warehouse must be different from the requesting warehouse.' });
+      }
+
+      activeDemandKeys.push(detail.detailKey);
+      await query(`
+        INSERT INTO demand_transfers (
+          order_number, detail_key, product_label, system_quantity, physical_quantity,
+          difference_quantity, requesting_warehouse, source_warehouse, status, requested_by, updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NULLIF($9, ''), NOW())
+        ON CONFLICT (order_number, detail_key) DO UPDATE
+        SET product_label = EXCLUDED.product_label,
+            system_quantity = EXCLUDED.system_quantity,
+            physical_quantity = EXCLUDED.physical_quantity,
+            difference_quantity = EXCLUDED.difference_quantity,
+            requesting_warehouse = EXCLUDED.requesting_warehouse,
+            source_warehouse = EXCLUDED.source_warehouse,
+            status = CASE
+              WHEN demand_transfers.status IN ('doesnt_have', 'transferred') THEN 'pending'
+              ELSE demand_transfers.status
+            END,
+            requested_by = COALESCE(EXCLUDED.requested_by, demand_transfers.requested_by),
+            updated_at = NOW()
+      `, [
+        orderNumber,
+        detail.detailKey,
+        String(detail.Label1 || '').trim() || 'Item',
+        systemQuantity,
+        physicalQuantity,
+        differenceQuantity,
+        orderWarehouse,
+        sourceWarehouse,
+        assignedEmployee,
+      ]);
+    }
+
+    if (activeDemandKeys.length) {
+      await query(`
+        DELETE FROM demand_transfers
+        WHERE order_number = $1
+          AND status IN ('pending', 'accepted')
+          AND NOT (detail_key = ANY($2::text[]))
+      `, [orderNumber, activeDemandKeys]);
+    } else {
+      await query(`
+        DELETE FROM demand_transfers
+        WHERE order_number = $1
+          AND status IN ('pending', 'accepted')
+      `, [orderNumber]);
+    }
+
     res.json({
       ok: true,
       updatedAt: rows[0].updatedAt,
       employeePrepared: rows[0].employeePrepared,
       controllerEmployeeId: rows[0].controllerEmployeeId,
+      demandTransferCount: activeDemandKeys.length,
     });
   } catch (error) {
     console.error('Logistics order physical quantities save failed:', error);
     res.status(500).json({ error: 'Unable to save physical quantities', details: error.message });
+  }
+});
+
+function mapDemandTransferRow(row, warehouse = '') {
+  const selected = String(warehouse || '').trim().toLowerCase();
+  const source = String(row.sourceWarehouse || '').trim().toLowerCase();
+  const requesting = String(row.requestingWarehouse || '').trim().toLowerCase();
+  let direction = 'incoming';
+  if (selected && requesting === selected && source !== selected) {
+    direction = 'outgoing';
+  } else if (selected && source === selected) {
+    direction = 'incoming';
+  }
+
+  return {
+    ...row,
+    direction,
+  };
+}
+
+app.get('/api/demand-transfers', async (req, res) => {
+  try {
+    const warehouse = String(req.query.warehouse || '').trim();
+    if (!warehouse) {
+      return res.json({ demands: [], count: 0, warehouse: null });
+    }
+
+    const rows = await query(`
+      SELECT
+        id,
+        order_number AS "orderNumber",
+        detail_key AS "detailKey",
+        product_label AS "productLabel",
+        system_quantity AS "systemQuantity",
+        physical_quantity AS "physicalQuantity",
+        difference_quantity AS "differenceQuantity",
+        requesting_warehouse AS "requestingWarehouse",
+        source_warehouse AS "sourceWarehouse",
+        status,
+        requested_by AS "requestedBy",
+        updated_by AS "updatedBy",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt"
+      FROM demand_transfers
+      WHERE status IN ('pending', 'accepted')
+        AND (
+          LOWER(TRIM(source_warehouse)) = LOWER(TRIM($1))
+          OR LOWER(TRIM(requesting_warehouse)) = LOWER(TRIM($1))
+        )
+      ORDER BY created_at DESC, id DESC;
+    `, [warehouse]);
+
+    const demands = rows.map((row) => mapDemandTransferRow(row, warehouse));
+    res.json({ demands, count: demands.length, warehouse });
+  } catch (error) {
+    console.error('Demand transfers fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch demand transfers', details: error.message });
+  }
+});
+
+app.put('/api/demand-transfers/bulk-status', async (req, res) => {
+  try {
+    const warehouse = String(req.body?.warehouse || '').trim();
+    const nextStatus = String(req.body?.status || '').trim().toLowerCase();
+    const updatedBy = String(req.body?.updatedBy || '').trim();
+    const allowedStatuses = ['accepted', 'transferred'];
+
+    if (!warehouse) {
+      return res.status(400).json({ error: 'A warehouse is required for bulk status updates.' });
+    }
+    if (!allowedStatuses.includes(nextStatus)) {
+      return res.status(400).json({ error: 'Bulk status must be accepted or transferred.' });
+    }
+
+    const rows = await query(`
+      UPDATE demand_transfers
+      SET status = $2,
+          updated_by = NULLIF($3, ''),
+          updated_at = NOW()
+      WHERE status IN ('pending', 'accepted')
+        AND (
+          LOWER(TRIM(source_warehouse)) = LOWER(TRIM($1))
+          OR LOWER(TRIM(requesting_warehouse)) = LOWER(TRIM($1))
+        )
+      RETURNING id;
+    `, [warehouse, nextStatus, updatedBy]);
+
+    res.json({ ok: true, updatedCount: rows.length, status: nextStatus });
+  } catch (error) {
+    console.error('Demand transfer bulk status update failed:', error);
+    res.status(500).json({ error: 'Unable to update demand transfers', details: error.message });
+  }
+});
+
+app.put('/api/demand-transfers/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const updatedBy = String(req.body?.updatedBy || '').trim();
+    const hasStatus = Object.prototype.hasOwnProperty.call(req.body || {}, 'status');
+    const hasQuantity = Object.prototype.hasOwnProperty.call(req.body || {}, 'differenceQuantity');
+    const nextStatus = hasStatus ? String(req.body?.status || '').trim().toLowerCase() : null;
+    const allowedStatuses = ['pending', 'accepted', 'doesnt_have', 'transferred'];
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'A valid demand transfer id is required.' });
+    }
+    if (!hasStatus && !hasQuantity) {
+      return res.status(400).json({ error: 'Provide a status and/or difference quantity to update.' });
+    }
+    if (hasStatus && !allowedStatuses.includes(nextStatus)) {
+      return res.status(400).json({ error: 'Status must be pending, accepted, doesnt_have, or transferred.' });
+    }
+
+    let differenceQuantity = null;
+    if (hasQuantity) {
+      differenceQuantity = Number(req.body?.differenceQuantity);
+      if (!Number.isFinite(differenceQuantity) || differenceQuantity <= 0) {
+        return res.status(400).json({ error: 'Difference quantity must be a positive number.' });
+      }
+    }
+
+    const rows = await query(`
+      UPDATE demand_transfers
+      SET status = CASE WHEN $2::boolean THEN $3 ELSE status END,
+          difference_quantity = CASE WHEN $4::boolean THEN $5 ELSE difference_quantity END,
+          updated_by = NULLIF($6, ''),
+          updated_at = NOW()
+      WHERE id = $1
+        AND status IN ('pending', 'accepted')
+      RETURNING
+        id,
+        order_number AS "orderNumber",
+        detail_key AS "detailKey",
+        product_label AS "productLabel",
+        system_quantity AS "systemQuantity",
+        physical_quantity AS "physicalQuantity",
+        difference_quantity AS "differenceQuantity",
+        requesting_warehouse AS "requestingWarehouse",
+        source_warehouse AS "sourceWarehouse",
+        status,
+        requested_by AS "requestedBy",
+        updated_by AS "updatedBy",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt";
+    `, [id, hasStatus, nextStatus, hasQuantity, differenceQuantity, updatedBy]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Demand transfer not found or already closed.' });
+    }
+
+    res.json({ ok: true, demand: rows[0] });
+  } catch (error) {
+    console.error('Demand transfer update failed:', error);
+    res.status(500).json({ error: 'Unable to update demand transfer', details: error.message });
+  }
+});
+
+app.put('/api/demand-transfers/:id/status', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nextStatus = String(req.body?.status || '').trim().toLowerCase();
+    const updatedBy = String(req.body?.updatedBy || '').trim();
+    const allowedStatuses = ['pending', 'accepted', 'doesnt_have', 'transferred'];
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'A valid demand transfer id is required.' });
+    }
+    if (!allowedStatuses.includes(nextStatus)) {
+      return res.status(400).json({ error: 'Status must be pending, accepted, doesnt_have, or transferred.' });
+    }
+
+    const rows = await query(`
+      UPDATE demand_transfers
+      SET status = $2,
+          updated_by = NULLIF($3, ''),
+          updated_at = NOW()
+      WHERE id = $1
+        AND status IN ('pending', 'accepted')
+      RETURNING
+        id,
+        order_number AS "orderNumber",
+        detail_key AS "detailKey",
+        product_label AS "productLabel",
+        system_quantity AS "systemQuantity",
+        physical_quantity AS "physicalQuantity",
+        difference_quantity AS "differenceQuantity",
+        requesting_warehouse AS "requestingWarehouse",
+        source_warehouse AS "sourceWarehouse",
+        status,
+        requested_by AS "requestedBy",
+        updated_by AS "updatedBy",
+        created_at AS "createdAt",
+        updated_at AS "updatedAt";
+    `, [id, nextStatus, updatedBy]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Demand transfer not found or already closed.' });
+    }
+
+    res.json({ ok: true, demand: rows[0] });
+  } catch (error) {
+    console.error('Demand transfer status update failed:', error);
+    res.status(500).json({ error: 'Unable to update demand transfer status', details: error.message });
   }
 });
 

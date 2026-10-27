@@ -149,6 +149,43 @@ body,
   color: #475569;
 }
 
+/* Tablet-friendly touch targets and denser usable layouts */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .app-shell {
+    font-size: 15px;
+  }
+
+  .sidebar-item {
+    min-height: 44px;
+    padding-top: 0.75rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .main-panel {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .app-header h1 {
+    font-size: 1.35rem;
+    line-height: 1.3;
+  }
+
+  button,
+  select,
+  input[type='number'],
+  input[type='text'] {
+    min-height: 40px;
+  }
+}
+
+@media (pointer: coarse) {
+  .sidebar-item,
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
 @media print {
   body {
     background: white;

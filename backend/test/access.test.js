@@ -10,8 +10,8 @@ const {
 } = require('../src/lib/access');
 
 test('sanitizeAllowedPages keeps only valid sidebar pages', () => {
-  const result = sanitizeAllowedPages(['inventory', 'drivers', 'unknown', 'logistics', 'status-dashboard', 'team-tasks', 'transfer', 'inventory']);
-  assert.deepEqual(result, ['inventory', 'drivers', 'logistics', 'status-dashboard', 'team-tasks', 'transfer']);
+  const result = sanitizeAllowedPages(['inventory', 'drivers', 'unknown', 'logistics', 'status-dashboard', 'team-tasks', 'transfer', 'demand-transfer', 'inventory']);
+  assert.deepEqual(result, ['inventory', 'drivers', 'logistics', 'status-dashboard', 'team-tasks', 'transfer', 'demand-transfer']);
 });
 
 test('admin credentials are available for the required login', () => {

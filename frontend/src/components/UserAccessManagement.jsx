@@ -8,6 +8,7 @@ const pageDefinitions = [
   { key: 'status-dashboard', label: 'Status dashboard' },
   { key: 'team-tasks', label: 'To-do list' },
   { key: 'transfer', label: 'Transfer' },
+  { key: 'demand-transfer', label: 'Demand Transfer' },
   { key: 'drivers', label: 'Drivers' },
   { key: 'schedule', label: 'Delivery plan' },
   { key: 'assets', label: 'Assets' },

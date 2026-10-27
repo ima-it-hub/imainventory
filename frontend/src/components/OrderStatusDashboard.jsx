@@ -19,6 +19,7 @@ export default function OrderStatusDashboard({
   onSavePhysicalQuantities,
   authenticatedEmployeeId,
   selectedWarehouse,
+  warehouses = [],
 }) {
   const [selectedWilaya, setSelectedWilaya] = useState('')
   const [selectedSchedule, setSelectedSchedule] = useState('')
@@ -161,6 +162,7 @@ export default function OrderStatusDashboard({
           onSavePhysicalQuantities={onSavePhysicalQuantities}
           authenticatedEmployeeId={authenticatedEmployeeId}
           selectedWarehouse={selectedWarehouse}
+          warehouses={warehouses}
         />
       )}
     </section>

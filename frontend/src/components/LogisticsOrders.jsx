@@ -40,6 +40,7 @@ export default function LogisticsOrders({
   setOrderStatusFilter,
   orderDeliveryFilter,
   setOrderDeliveryFilter,
+  deliverySchedule = [],
   filteredOrders,
   totalPendingOrders,
   totalReadyOrders,
@@ -52,6 +53,7 @@ export default function LogisticsOrders({
   onSaveOrderPhysicalQuantities,
   authenticatedEmployeeId,
   selectedWarehouse,
+  warehouses = [],
   orderToOpen,
   onOrderDetailsOpened,
 }) {
@@ -62,6 +64,8 @@ export default function LogisticsOrders({
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDER_PAGE_SIZE))
   const page = Math.min(currentPage, totalPages)
   const visibleOrders = filteredOrders.slice((page - 1) * ORDER_PAGE_SIZE, page * ORDER_PAGE_SIZE)
+  const scheduleDays = [...new Set(deliverySchedule.map((route) => String(route.day || '').trim()).filter(Boolean))]
+    .sort((first, second) => first.localeCompare(second))
 
   function showOrderDetails(order) {
     setDetailsOrder(order)
@@ -204,8 +208,8 @@ export default function LogisticsOrders({
             </span>
           </div> */}
 
-          <div className="mb-3 flex flex-col gap-3 md:flex-row">
-            <div className="relative flex-1">
+          <div className="mb-3 grid gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
+            <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -219,37 +223,39 @@ export default function LogisticsOrders({
               />
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {['All', ...logisticsStatuses].map((status) => (
-                <button
-                  key={status}
-                  type="button"
-                  onClick={() => {
-                    setCurrentPage(1)
-                    setOrderStatusFilter(status)
-                  }}
-                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${orderStatusFilter === status ? 'bg-slate-900 text-white' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'}`}
-                >
-                  {ORDER_STATUS_LABELS[status] || status}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="mb-3 flex flex-wrap gap-2">
-            {['All', 'Today', 'Tomorrow'].map((option) => (
-              <button
-                key={option}
-                type="button"
-                onClick={() => {
+            <label className="text-xs font-semibold text-slate-600">
+              Status
+              <select
+                value={orderStatusFilter}
+                onChange={(event) => {
                   setCurrentPage(1)
-                  setOrderDeliveryFilter(option)
+                  setOrderStatusFilter(event.target.value)
                 }}
-                className={`rounded-lg px-3 py-2 text-xs font-bold transition ${orderDeliveryFilter === option ? 'bg-sky-600 text-white' : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'}`}
+                className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500"
               >
-                {option === 'All' ? 'All deliveries' : option}
-              </button>
-            ))}
+                <option value="All">All statuses</option>
+                {logisticsStatuses.map((status) => (
+                  <option key={status} value={status}>{ORDER_STATUS_LABELS[status] || status}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-xs font-semibold text-slate-600">
+              Planning de livraison
+              <select
+                value={orderDeliveryFilter}
+                onChange={(event) => {
+                  setCurrentPage(1)
+                  setOrderDeliveryFilter(event.target.value)
+                }}
+                className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500"
+              >
+                <option value="">Tous les plannings</option>
+                {scheduleDays.map((day) => (
+                  <option key={day} value={day}>{day}</option>
+                ))}
+              </select>
+            </label>
           </div>
 
           <div className="max-h-[calc(100vh-450px)] min-h-[260px] flex-1 overflow-auto">
@@ -411,6 +417,7 @@ export default function LogisticsOrders({
           onSavePhysicalQuantities={onSaveOrderPhysicalQuantities}
           authenticatedEmployeeId={authenticatedEmployeeId}
           selectedWarehouse={selectedWarehouse}
+          warehouses={warehouses}
         />
       )}
     </section>

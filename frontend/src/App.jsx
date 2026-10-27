@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
+  ArrowLeftRight,
   Boxes,
   CalendarRange,
   Camera,
@@ -32,6 +33,7 @@ import UserAccessManagement from './components/UserAccessManagement'
 import AssetManagement from './components/AssetManagement'
 import TeamTasks from './components/TeamTasks'
 import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
+import DemandTransfer from './components/DemandTransfer'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL
@@ -169,10 +171,15 @@ function App() {
   })
   const [orderSearch, setOrderSearch] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState('All')
-  const [orderDeliveryFilter, setOrderDeliveryFilter] = useState('All')
+  const [orderDeliveryFilter, setOrderDeliveryFilter] = useState('')
   const [transferSearch, setTransferSearch] = useState('')
   const [transferStatusFilter, setTransferStatusFilter] = useState('All')
   const [transferPage, setTransferPage] = useState(1)
+  const [demandTransfers, setDemandTransfers] = useState([])
+  const [demandTransfersLoading, setDemandTransfersLoading] = useState(false)
+  const [demandTransfersError, setDemandTransfersError] = useState('')
+  const [demandTransferUpdatingId, setDemandTransferUpdatingId] = useState(null)
+  const [demandTransferBulkUpdating, setDemandTransferBulkUpdating] = useState(false)
   const [driverSearch, setDriverSearch] = useState('')
   const [orderForm, setOrderForm] = useState({
     orderNumber: '',
@@ -342,6 +349,7 @@ function App() {
     { key: 'logistics', label: 'Logistics', icon: Truck },
     { key: 'status-dashboard', label: 'Status dashboard', icon: ClipboardList },
     { key: 'transfer', label: 'Transfer', icon: PackageSearch },
+    { key: 'demand-transfer', label: 'Demand Transfer', icon: ArrowLeftRight },
     { key: 'drivers', label: 'Drivers', icon: UserRound },
     { key: 'schedule', label: 'Delivery plan', icon: CalendarRange },
     { key: 'assets', label: 'Assets', icon: Boxes },
@@ -1318,12 +1326,27 @@ function App() {
     return data.details || []
   }
 
-  async function handleSaveOrderPhysicalQuantities(order, physicalQuantities, controlQuantities, employeePrepared, controllerEmployeeId) {
+  async function handleSaveOrderPhysicalQuantities(
+    order,
+    physicalQuantities,
+    controlQuantities,
+    employeePrepared,
+    controllerEmployeeId,
+    demandTransfersPayload = {},
+    requestingWarehouse = '',
+  ) {
     const identifier = order.orderNumber || order.id
     const response = await fetch(`${API_URL}/api/logistics/orders/${encodeURIComponent(identifier)}/physical-counts`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ physicalQuantities, controlQuantities, employeePrepared, controllerEmployeeId }),
+      body: JSON.stringify({
+        physicalQuantities,
+        controlQuantities,
+        employeePrepared,
+        controllerEmployeeId,
+        demandTransfers: demandTransfersPayload,
+        requestingWarehouse: requestingWarehouse || selectedWarehouse || currentUser?.workingWarehouse || '',
+      }),
     })
     const data = await response.json()
     if (!response.ok) throw new Error(data.error || 'Unable to save physical quantities')
@@ -1343,12 +1366,126 @@ function App() {
     return data
   }
 
+  async function loadDemandTransfers() {
+    const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+    if (!warehouse) {
+      setDemandTransfers([])
+      return
+    }
+
+    setDemandTransfersLoading(true)
+    setDemandTransfersError('')
+    try {
+      const params = new URLSearchParams({ warehouse })
+      const response = await fetch(`${API_URL}/api/demand-transfers?${params.toString()}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to fetch demand transfers')
+      setDemandTransfers(data.demands || [])
+    } catch (error) {
+      setDemandTransfersError(error.message || 'Unable to fetch demand transfers')
+      setDemandTransfers([])
+    } finally {
+      setDemandTransfersLoading(false)
+    }
+  }
+
+  async function handleDemandTransferStatusChange(demandId, nextStatus) {
+    setDemandTransferUpdatingId(demandId)
+    setDemandTransfersError('')
+    try {
+      const response = await fetch(`${API_URL}/api/demand-transfers/${demandId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: nextStatus,
+          updatedBy: authenticatedEmployeeId || currentUser?.username || '',
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to update demand transfer status')
+
+      if (nextStatus === 'doesnt_have' || nextStatus === 'transferred') {
+        setDemandTransfers((current) => current.filter((demand) => demand.id !== demandId))
+      } else {
+        setDemandTransfers((current) => current.map((demand) => (
+          demand.id === demandId ? { ...demand, status: nextStatus } : demand
+        )))
+      }
+    } catch (error) {
+      setDemandTransfersError(error.message || 'Unable to update demand transfer status')
+    } finally {
+      setDemandTransferUpdatingId(null)
+    }
+  }
+
+  async function handleDemandTransferQuantityChange(demandId, differenceQuantity) {
+    setDemandTransferUpdatingId(demandId)
+    setDemandTransfersError('')
+    try {
+      const response = await fetch(`${API_URL}/api/demand-transfers/${demandId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          differenceQuantity,
+          updatedBy: authenticatedEmployeeId || currentUser?.username || '',
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to update demanded quantity')
+
+      setDemandTransfers((current) => current.map((demand) => (
+        demand.id === demandId
+          ? { ...demand, differenceQuantity: data.demand?.differenceQuantity ?? differenceQuantity }
+          : demand
+      )))
+    } catch (error) {
+      setDemandTransfersError(error.message || 'Unable to update demanded quantity')
+      await loadDemandTransfers()
+    } finally {
+      setDemandTransferUpdatingId(null)
+    }
+  }
+
+  async function handleDemandTransferBulkStatusChange(nextStatus) {
+    const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+    if (!warehouse) return
+
+    setDemandTransferBulkUpdating(true)
+    setDemandTransfersError('')
+    try {
+      const response = await fetch(`${API_URL}/api/demand-transfers/bulk-status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          warehouse,
+          status: nextStatus,
+          updatedBy: authenticatedEmployeeId || currentUser?.username || '',
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to update demand transfers')
+
+      if (nextStatus === 'transferred') {
+        setDemandTransfers([])
+      } else {
+        setDemandTransfers((current) => current.map((demand) => ({ ...demand, status: 'accepted' })))
+      }
+    } catch (error) {
+      setDemandTransfersError(error.message || 'Unable to update demand transfers')
+    } finally {
+      setDemandTransferBulkUpdating(false)
+    }
+  }
+
   useEffect(() => {
     if (activeView === 'logistics' || activeView === 'status-dashboard') {
       loadOrders()
     }
     if (activeView === 'transfer') {
       loadTransfers()
+    }
+    if (activeView === 'demand-transfer') {
+      loadDemandTransfers()
     }
   }, [activeView, selectedWarehouse, currentUser?.workingWarehouse])
 
@@ -1370,6 +1507,8 @@ function App() {
           await loadOrders()
         } else if (activeView === 'transfer') {
           await loadTransfers()
+        } else if (activeView === 'demand-transfer') {
+          await loadDemandTransfers()
         } else if (activeView === 'access') {
           await loadUsers()
         } else if (activeView === 'drivers') {
@@ -1592,35 +1731,23 @@ function App() {
 
   const qrValue = selectedItem ? JSON.stringify({ sku: selectedItem.sku, id: selectedItem.id }) : '{"sku":"","id":""}'
 
-  const weekDayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-  const getWeekDayName = (date = new Date()) => weekDayNames[(date.getDay() + 6) % 7]
-  const getTargetDeliveryWilayas = (targetDay) => {
-    const normalizedDay = String(targetDay || '').trim()
-    if (!normalizedDay) return new Set()
-    return new Set(
-      deliverySchedule
-        .filter((route) => route.day === normalizedDay)
-        .map((route) => String(route.wilaya).trim().toLowerCase()),
-    )
-  }
-
   const filteredOrders = orders
     .filter((order) => {
       const customerName = String(order?.customerName || '').toLowerCase()
       const wilaya = String(order?.wilaya || '').toLowerCase()
       const orderNumber = String(order?.orderNumber || '').toLowerCase()
       const search = String(orderSearch || '').toLowerCase()
+      const selectedSchedule = String(orderDeliveryFilter || '').trim().toLowerCase()
 
       const matchesSearch = !search || customerName.includes(search) || wilaya.includes(search) || orderNumber.includes(search)
       const matchesStatus = orderStatusFilter === 'All' || order.status === orderStatusFilter
 
       let matchesDelivery = true
-      if (orderDeliveryFilter !== 'All') {
-        const today = new Date()
-        const tomorrow = new Date(today)
-        tomorrow.setDate(today.getDate() + 1)
-        const targetDay = orderDeliveryFilter === 'Today' ? getWeekDayName(today) : getWeekDayName(tomorrow)
-        matchesDelivery = getTargetDeliveryWilayas(targetDay).has(String(order?.wilaya || '').trim().toLowerCase())
+      if (selectedSchedule) {
+        matchesDelivery = deliverySchedule.some((route) => (
+          String(route.day || '').trim().toLowerCase() === selectedSchedule
+          && String(route.wilaya || '').trim().toLowerCase() === String(order?.wilaya || '').trim().toLowerCase()
+        ))
       }
 
       return matchesSearch && matchesStatus && matchesDelivery
@@ -1713,7 +1840,7 @@ function App() {
   }
 
   const visibleSidebarPages = sidebarPages.filter((page) => {
-    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'status-dashboard', 'team-tasks'].includes(page.key)
+    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'demand-transfer', 'status-dashboard', 'team-tasks'].includes(page.key)
     return isAdminVisiblePage
       ? currentUser?.role === 'admin' || allowedPages.includes(page.key)
       : allowedPages.includes(page.key)
@@ -1825,6 +1952,8 @@ function App() {
                               ? 'QR counting'
                               : activeView === 'transfer'
                                 ? 'Transfer Management'
+                                : activeView === 'demand-transfer'
+                                  ? 'Demand Transfer'
                                         : activeView === 'status-dashboard'
                                           ? 'Order Status Dashboard'
                                             : activeView === 'team-tasks'
@@ -1840,7 +1969,7 @@ function App() {
                 </div>
               </div>
 
-              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'qr-scan' || activeView === 'schedule' ? (
+              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'demand-transfer' || activeView === 'qr-scan' || activeView === 'schedule' ? (
                 <div className="header-actions hidden items-center gap-3 md:flex">
                   <select
                     value={selectedWarehouse}
@@ -1904,6 +2033,18 @@ function App() {
 
             {activeView === 'assets' ? (
               <AssetManagement apiUrl={API_URL} />
+            ) : activeView === 'demand-transfer' ? (
+              <DemandTransfer
+                demands={demandTransfers}
+                loading={demandTransfersLoading}
+                error={demandTransfersError}
+                selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                onStatusChange={handleDemandTransferStatusChange}
+                onQuantityChange={handleDemandTransferQuantityChange}
+                onBulkStatusChange={handleDemandTransferBulkStatusChange}
+                updatingId={demandTransferUpdatingId}
+                bulkUpdating={demandTransferBulkUpdating}
+              />
             ) : activeView === 'team-tasks' ? (
               <TeamTasks apiUrl={API_URL} currentUser={currentUser} users={users} />
             ) : activeView === 'access' ? (
@@ -2003,6 +2144,7 @@ function App() {
                 onSavePhysicalQuantities={handleSaveOrderPhysicalQuantities}
                 authenticatedEmployeeId={authenticatedEmployeeId}
                 selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                warehouses={warehouses}
               />
             ) : activeView === 'transfer' ? (
               <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">
@@ -2529,6 +2671,7 @@ function App() {
                 setOrderStatusFilter={setOrderStatusFilter}
                 orderDeliveryFilter={orderDeliveryFilter}
                 setOrderDeliveryFilter={setOrderDeliveryFilter}
+                deliverySchedule={deliverySchedule}
                 filteredOrders={filteredOrders}
                 totalPendingOrders={totalPendingOrders}
                 totalReadyOrders={totalReadyOrders}
@@ -2541,6 +2684,7 @@ function App() {
                 onSaveOrderPhysicalQuantities={handleSaveOrderPhysicalQuantities}
                 authenticatedEmployeeId={authenticatedEmployeeId}
                 selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                warehouses={warehouses}
                 orderToOpen={pendingOrderDetails}
                 onOrderDetailsOpened={setPendingOrderDetails}
               />

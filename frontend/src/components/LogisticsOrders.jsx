@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ChevronRight, Eye, Printer, Search, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import OrderDetailsDialog from './OrderDetailsDialog'
 
 const ORDER_PAGE_SIZE = 50
@@ -64,13 +64,10 @@ export default function LogisticsOrders({
   authenticatedEmployeeId,
   selectedWarehouse,
   warehouses = [],
-  orderToOpen,
-  onOrderDetailsOpened,
 }) {
   const [currentTime, setCurrentTime] = useState(new Date())
   const [currentPage, setCurrentPage] = useState(1)
   const [detailsOrder, setDetailsOrder] = useState(null)
-  const openedOrderKey = useRef('')
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDER_PAGE_SIZE))
   const page = Math.min(currentPage, totalPages)
   const visibleOrders = filteredOrders.slice((page - 1) * ORDER_PAGE_SIZE, page * ORDER_PAGE_SIZE)
@@ -85,20 +82,6 @@ export default function LogisticsOrders({
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
-
-  useEffect(() => {
-    if (!orderToOpen) {
-      openedOrderKey.current = ''
-      return
-    }
-
-    const orderKey = String(orderToOpen.orderNumber || orderToOpen.id || '')
-    if (!orderKey || openedOrderKey.current === orderKey) return
-
-    openedOrderKey.current = orderKey
-    showOrderDetails(orderToOpen)
-    onOrderDetailsOpened(null)
-  }, [orderToOpen, onOrderDetailsOpened])
 
   return (
     <section className="flex flex-1 flex-col border border-slate-200 bg-white p-4 shadow-none">

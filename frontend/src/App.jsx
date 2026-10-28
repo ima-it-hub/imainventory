@@ -31,6 +31,7 @@ import UserAccessManagement from './components/UserAccessManagement'
 import AssetManagement from './components/AssetManagement'
 import TeamTasks from './components/TeamTasks'
 import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
+import OrderDetailsDialog from './components/OrderDetailsDialog'
 import DemandTransfer from './components/DemandTransfer'
 import { useToast } from './components/ToastProvider'
 import './App.css'
@@ -1160,11 +1161,11 @@ function App() {
               customerName: parsed.customerName || 'Order',
               wilaya: parsed.wilaya || '',
               createdAt: parsed.createdAt || '',
+              warehouseName: parsed.warehouseName || selectedWarehouse || '',
             })
             setSelectedItem(null)
             setError('')
             setResult(null)
-            setActiveView('logistics')
             return
           }
 
@@ -2203,63 +2204,77 @@ function App() {
                 warehouses={warehouses}
               />
             ) : activeView === 'qr-scan' ? (
-              <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center bg-sky-50 text-sky-700">
-                    <QrCode className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600">Quick count</p>
-                    <h3 className="text-2xl font-black text-slate-900">QR scan counting</h3>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <div id="qr-scan-target" className="min-h-[300px] w-full" />
+              <>
+                <section className="space-y-4 border border-slate-200 bg-white p-4 shadow-none">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center bg-sky-50 text-sky-700">
+                      <QrCode className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-600">Quick count</p>
+                      <h3 className="text-2xl font-black text-slate-900">QR scan counting</h3>
+                    </div>
                   </div>
 
-                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Scanned item</div>
-                    {selectedItem ? (
-                      <div className="space-y-3">
-                        <div>
-                          <div className="text-lg font-black text-slate-900">{selectedItem.name}</div>
-                          <div className="text-sm text-slate-600">SKU: {selectedItem.sku}</div>
+                  <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                      <div id="qr-scan-target" className="min-h-[300px] w-full" />
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Scanned item</div>
+                      {selectedItem ? (
+                        <div className="space-y-3">
+                          <div>
+                            <div className="text-lg font-black text-slate-900">{selectedItem.name}</div>
+                            <div className="text-sm text-slate-600">SKU: {selectedItem.sku}</div>
+                          </div>
+
+                          <label className="block text-sm font-medium text-slate-700">
+                            Physical quantity
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={qrScanQuantity}
+                              onChange={(e) => setQrScanQuantity(e.target.value)}
+                              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-sky-500"
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!selectedItem) return
+                              handleReconcile(selectedItem, qrScanQuantity)
+                            }}
+                            disabled={loading || !selectedItem}
+                            className="w-full rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Save physical quantity
+                          </button>
                         </div>
-
-                        <label className="block text-sm font-medium text-slate-700">
-                          Physical quantity
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={qrScanQuantity}
-                            onChange={(e) => setQrScanQuantity(e.target.value)}
-                            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-sky-500"
-                          />
-                        </label>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!selectedItem) return
-                            handleReconcile(selectedItem, qrScanQuantity)
-                          }}
-                          disabled={loading || !selectedItem}
-                          className="w-full rounded-xl bg-sky-600 px-4 py-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Save physical quantity
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-                        Scan an item QR code to start the count.
-                      </div>
-                    )}
+                      ) : (
+                        <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
+                          Scan an item QR code to start the count.
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </section>
+                </section>
+                {pendingOrderDetails && (
+                  <OrderDetailsDialog
+                    key={pendingOrderDetails.orderNumber || pendingOrderDetails.id}
+                    order={pendingOrderDetails}
+                    onClose={() => setPendingOrderDetails(null)}
+                    onFetchOrderDetails={handleFetchOrderDetails}
+                    onSavePhysicalQuantities={handleSaveOrderPhysicalQuantities}
+                    authenticatedEmployeeId={authenticatedEmployeeId}
+                    selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                    warehouses={warehouses}
+                  />
+                )}
+              </>
             ) : activeView === 'drivers' ? (
               <DriversManagement
                 driverForm={driverForm}
@@ -2830,8 +2845,6 @@ function App() {
                 authenticatedEmployeeId={authenticatedEmployeeId}
                 selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
                 warehouses={warehouses}
-                orderToOpen={pendingOrderDetails}
-                onOrderDetailsOpened={setPendingOrderDetails}
               />
             )}
           </div>

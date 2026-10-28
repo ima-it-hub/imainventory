@@ -31,6 +31,17 @@ function formatDeliveryDuration(seconds) {
   return `${minutes}m`
 }
 
+function formatOrderDateOnly(dateValue) {
+  if (!dateValue) return '—'
+  const date = new Date(dateValue)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
 export default function LogisticsOrders({
   orderForm,
   setOrderForm,
@@ -45,7 +56,6 @@ export default function LogisticsOrders({
   totalPendingOrders,
   totalReadyOrders,
   logisticsStatuses,
-  formatOrderDate,
   getStatusClasses,
   onStatusChange,
   onPrintOrderTicket,
@@ -265,7 +275,7 @@ export default function LogisticsOrders({
             <table className="w-full min-w-[900px] border-collapse text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
-                  {['Q', 'Client name', 'Wilaya', 'Date and time', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Status', 'Actions'].map((label) => (
+                  {['Q', 'code', 'Client', 'Wilaya', 'Date', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Status', 'Actions'].map((label) => (
                     <th key={label} className="border-b border-slate-200 px-4 py-3 font-semibold">{label}</th>
                   ))}
                 </tr>
@@ -296,9 +306,10 @@ export default function LogisticsOrders({
                           : <X aria-hidden="true" className="mx-auto h-4 w-4 text-rose-700" />}
                       </span>
                     </td>
+                    <td className="px-4 py-3 whitespace-nowrap font-mono text-xs font-semibold text-slate-900">{order.orderNumber || '—'}</td>
                     <td className="px-4 py-3 font-semibold text-slate-900">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-600">{order.wilaya}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatOrderDate(order.createdAt)}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatOrderDateOnly(order.createdAt)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatDeliveryDuration(order.pendingToReadySeconds)}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatDeliveryDuration(order.pendingToDeliveredSeconds)}</td>
                     <td className="px-4 py-3 text-slate-600">{order.preparedBy || order.employeePrepared || '—'}</td>
@@ -347,7 +358,7 @@ export default function LogisticsOrders({
                 ))}
                 {!visibleOrders.length && (
                   <tr>
-                    <td colSpan="10" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
+                    <td colSpan="11" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
                   </tr>
                 )}
               </tbody>

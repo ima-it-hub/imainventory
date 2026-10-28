@@ -809,18 +809,31 @@ function App() {
       const coefficient = Number(detail.Colisage ?? detail.colisage ?? detail.Coefficient ?? detail.coefficient)
       if (!Number.isFinite(coefficient) || coefficient <= 0) return total
 
-      const physical = Number(detail.physicalQuantity)
-      const system = Number(detail.Quantity)
-      const quantity = Number.isFinite(physical) && String(detail.physicalQuantity ?? '').trim() !== ''
-        ? physical
-        : system
-      if (!Number.isFinite(quantity) || quantity <= 0) return total
-      return total + (quantity / coefficient)
+      const rawPhysical = detail.physicalQuantity
+      if (rawPhysical === '' || rawPhysical === null || rawPhysical === undefined) return total
+      const physical = Number(rawPhysical)
+      if (!Number.isFinite(physical) || physical <= 0) return total
+      return total + (physical / coefficient)
     }, 0)
   }
 
   async function handlePrintOrderTicket(order) {
     if (!order) return
+
+    let colisCount = 0
+    try {
+      const details = await handleFetchOrderDetails(order)
+      colisCount = calculateOrderColisCount(details)
+    } catch (err) {
+      setError(err.message || 'Unable to prepare order ticket')
+      return
+    }
+
+    const totalColis = Math.ceil(Number(colisCount) || 0)
+    if (totalColis <= 0) {
+      setError('Enter and save prepared quantities before printing tickets.')
+      return
+    }
 
     const printWindow = window.open('', '_blank', 'width=700,height=900')
     if (!printWindow) {
@@ -828,21 +841,10 @@ function App() {
       return
     }
 
-    let colisCount = 0
-    try {
-      const details = await handleFetchOrderDetails(order)
-      colisCount = calculateOrderColisCount(details)
-    } catch (err) {
-      printWindow.close()
-      setError(err.message || 'Unable to prepare order ticket')
-      return
-    }
-
     const safeCustomer = escapeHtml(order.customerName || 'Customer')
     const safeWilaya = escapeHtml(order.wilaya || '—')
     const safeOrderNumber = escapeHtml(order.orderNumber || '—')
     const safePhone = escapeHtml(String(order.customerPhone || order.customer_phone || '').trim() || '—')
-    const totalColis = Math.max(1, Math.ceil(Number(colisCount) || 0))
     const safeLogo = '/ima.png'
     const qrImage = buildOrderQrUrl(order)
 
@@ -852,12 +854,18 @@ function App() {
       return `
           <div class="ticket">
             <div class="media-row">
-              <img src="${safeLogo}" alt="IMA logo" />
-              <img src="${qrImage}" alt="Order QR code" />
+              <img class="logo" src="${safeLogo}" alt="IMA logo" />
+              <img class="qr" src="${qrImage}" alt="Order QR code" />
             </div>
 
             <div class="center-block">
-              <h1 class="order-code">${safeOrderNumber}</h1>
+              <table class="order-code-table" cellpadding="0" cellspacing="0" bgcolor="#000000">
+                <tr>
+                  <td align="center" bgcolor="#000000" style="background-color:#000000;color:#ffffff;">
+                    <h1 class="order-code">${safeOrderNumber}</h1>
+                  </td>
+                </tr>
+              </table>
               <p class="wilaya">${safeWilaya}</p>
             </div>
 
@@ -897,7 +905,7 @@ function App() {
             .ticket {
               width: 100mm;
               height: 100mm;
-              padding: 4mm;
+              padding: 3.5mm;
               background: #ffffff;
               border: none;
               overflow: hidden;
@@ -905,6 +913,8 @@ function App() {
               color: #000000;
               page-break-after: always;
               break-after: page;
+              display: flex;
+              flex-direction: column;
             }
             .ticket:last-child {
               page-break-after: auto;
@@ -914,20 +924,42 @@ function App() {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              gap: 6mm;
+              gap: 4mm;
+              flex-shrink: 0;
             }
             .media-row img {
-              width: 28mm;
-              height: 28mm;
               object-fit: contain;
               display: block;
               background: #ffffff;
               border: none;
               padding: 0;
             }
+            .media-row .logo {
+              width: 34mm;
+              height: 34mm;
+            }
+            .media-row .qr {
+              width: 24mm;
+              height: 24mm;
+            }
             .center-block {
-              margin-top: 2.5mm;
+              margin-top: 2mm;
               text-align: center;
+              flex-shrink: 0;
+            }
+            .order-code-table {
+              width: 100%;
+              border-collapse: collapse;
+              background: #000000 !important;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .order-code-table td {
+              background: #000000 !important;
+              color: #ffffff !important;
+              padding: 1.8mm 2.5mm;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
             }
             .order-code {
               margin: 0;
@@ -936,37 +968,52 @@ function App() {
               font-weight: 600;
               line-height: 1;
               letter-spacing: 0.01em;
-              color: #000000;
+              color: #ffffff !important;
+              background: transparent;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
             }
             .wilaya {
-              margin: 1.4mm 0 0;
-              font-size: 3mm;
+              margin: 1.6mm 0 0;
+              font-size: 3.2mm;
               font-weight: 700;
               letter-spacing: 0.04em;
               text-transform: uppercase;
               color: #000000;
             }
             .facts {
-              margin-top: 3.5mm;
+              margin-top: 2.2mm;
+              margin-bottom: 2mm;
               display: grid;
               grid-template-columns: 1.2fr 0.8fr;
-              gap: 2.5mm;
+              gap: 3mm;
+              flex-shrink: 0;
+              align-items: start;
             }
             .fact {
-              padding: 2.4mm;
-              background: #ffffff;
-              border-left: 1mm solid #000000;
+              position: relative;
+              padding: 0.6mm 0 0.6mm 3.2mm;
+              background: transparent;
+              border: none;
               color: #000000;
             }
+            .fact::before {
+              content: '';
+              position: absolute;
+              left: 0;
+              top: 0.8mm;
+              bottom: 0.8mm;
+              width: 0;
+              border-left: 0.7mm solid #000000;
+            }
             .fact.dark {
-              background: #ffffff;
-              border-left-color: #000000;
+              background: transparent;
               color: #000000;
             }
             .fact .label {
               display: block;
-              margin-bottom: 0.8mm;
-              font-size: 2.1mm;
+              margin-bottom: 1.1mm;
+              font-size: 2.6mm;
               font-weight: 800;
               letter-spacing: 0.12em;
               text-transform: uppercase;
@@ -975,7 +1022,7 @@ function App() {
             .fact.dark .label { color: #000000; }
             .fact .value {
               display: block;
-              font-size: 3.4mm;
+              font-size: 5mm;
               font-weight: 800;
               line-height: 1.15;
               overflow-wrap: anywhere;
@@ -983,21 +1030,22 @@ function App() {
             }
             .fact.dark .value {
               font-family: 'IBM Plex Mono', monospace;
-              font-size: 5mm;
+              font-size: 7mm;
               color: #000000;
             }
             .phone {
-              margin-top: 2.5mm;
-              padding: 2mm 2.4mm;
+              margin-top: 0;
+              padding: 2.6mm 2.8mm;
               border: 0.35mm dashed #000000;
               display: flex;
               align-items: center;
               justify-content: space-between;
               gap: 2mm;
               color: #000000;
+              flex-shrink: 0;
             }
             .phone span {
-              font-size: 2.2mm;
+              font-size: 2.6mm;
               font-weight: 800;
               letter-spacing: 0.1em;
               text-transform: uppercase;
@@ -1006,7 +1054,7 @@ function App() {
             .phone strong {
               flex: 1;
               min-height: 3.5mm;
-              font-size: 2.8mm;
+              font-size: 3.6mm;
               font-weight: 800;
               text-align: right;
               overflow-wrap: anywhere;
@@ -2774,7 +2822,6 @@ function App() {
                 totalPendingOrders={totalPendingOrders}
                 totalReadyOrders={totalReadyOrders}
                 logisticsStatuses={orderStatuses}
-                formatOrderDate={formatOrderDate}
                 getStatusClasses={getStatusClasses}
                 onStatusChange={handleOrderStatusChange}
                 onPrintOrderTicket={handlePrintOrderTicket}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { MessageSquare, Plus, Send, X } from 'lucide-react'
+import { useToast } from './ToastProvider'
 
 const TASK_COLUMNS = [
   { status: 'todo', label: 'À faire', border: 'border-slate-300', card: 'border-slate-200 bg-white' },
@@ -8,6 +9,7 @@ const TASK_COLUMNS = [
 ]
 
 export default function TeamTasks({ apiUrl, currentUser, users }) {
+  const toast = useToast()
   const [tasks, setTasks] = useState([])
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -24,6 +26,20 @@ export default function TeamTasks({ apiUrl, currentUser, users }) {
   const [commentSaving, setCommentSaving] = useState(false)
   const viewerId = Number(currentUser?.id)
   const isAdmin = currentUser?.role === 'admin'
+
+  useEffect(() => {
+    if (!error) return undefined
+    toast.error(error)
+    const timer = setTimeout(() => setError(''), 0)
+    return () => clearTimeout(timer)
+  }, [error, toast])
+
+  useEffect(() => {
+    if (!commentError) return undefined
+    toast.error(commentError)
+    const timer = setTimeout(() => setCommentError(''), 0)
+    return () => clearTimeout(timer)
+  }, [commentError, toast])
 
   async function loadTasks({ silent = false } = {}) {
     if (!Number.isInteger(viewerId) || viewerId <= 0) return
@@ -242,7 +258,6 @@ export default function TeamTasks({ apiUrl, currentUser, users }) {
         </button>
       </form>
 
-      {error ? <p role="alert" className="text-sm text-rose-700">{error}</p> : null}
       {loading ? <p className="py-8 text-center text-sm text-slate-500">Chargement des tâches…</p> : null}
       {!loading && !tasks.length ? <p className="py-8 text-center text-sm text-slate-500">Aucune tâche visible pour le moment.</p> : null}
 
@@ -344,7 +359,6 @@ export default function TeamTasks({ apiUrl, currentUser, users }) {
             {selectedTask.description ? <p className="border-b border-slate-200 px-5 py-3 text-sm text-slate-700">{selectedTask.description}</p> : null}
             <div className="min-h-[180px] flex-1 space-y-3 overflow-y-auto p-5">
               {commentsLoading && !comments.length ? <p className="text-sm text-slate-500">Chargement des commentaires…</p> : null}
-              {commentError ? <p role="alert" className="text-sm text-rose-700">{commentError}</p> : null}
               {!commentsLoading && !comments.length && !commentError ? <p className="text-sm text-slate-500">Aucun commentaire pour le moment.</p> : null}
               {comments.map((comment) => (
                 <article key={comment.id} className="border border-slate-200 bg-slate-50 px-3 py-2">

@@ -98,8 +98,6 @@ export default function DemandTransfer({
 
       {loading ? (
         <p className="py-12 text-center text-sm text-slate-500">Loading demand transfers...</p>
-      ) : error ? (
-        <p role="alert" className="py-12 text-center text-sm text-rose-700">{error}</p>
       ) : demands.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse text-left text-sm">

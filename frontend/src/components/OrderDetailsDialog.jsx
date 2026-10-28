@@ -1,5 +1,38 @@
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
+import { useToast } from './ToastProvider'
+
+function formatQuantity(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  return number.toLocaleString('fr-FR', { maximumFractionDigits: 2 })
+}
+
+function formatDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('fr-FR')
+}
+
+function getColisageCoefficient(detail) {
+  const raw = detail.Colisage ?? detail.colisage ?? detail.Coefficient ?? detail.coefficient
+  const coefficient = Number(raw)
+  return Number.isFinite(coefficient) && coefficient > 0 ? coefficient : null
+}
+
+function formatColisage(detail) {
+  const coefficient = getColisageCoefficient(detail)
+  const quantity = Number(detail.Quantity)
+  if (!coefficient || !Number.isFinite(quantity)) return '—'
+  const packs = quantity / coefficient
+  const packsLabel = packs.toLocaleString('fr-FR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  const coefficientLabel = coefficient.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
+  return `${packsLabel} x ${coefficientLabel}`
+}
 
 export default function OrderDetailsDialog({
   order,
@@ -10,6 +43,7 @@ export default function OrderDetailsDialog({
   selectedWarehouse,
   warehouses = [],
 }) {
+  const toast = useToast()
   const [orderDetails, setOrderDetails] = useState([])
   const [detailsLoading, setDetailsLoading] = useState(true)
   const [detailsSaving, setDetailsSaving] = useState(false)
@@ -76,6 +110,54 @@ export default function OrderDetailsDialog({
     return Math.max(0, system - physical)
   }
 
+  function handlePhysicalChange(detail, nextValue) {
+    const detailKey = detail.detailKey
+    setDetailsSaved(false)
+    setPhysicalDirty(true)
+    setPhysicalQuantities((current) => ({ ...current, [detailKey]: nextValue }))
+    const physical = Number(nextValue)
+    const system = Number(detail.Quantity)
+    if (!(Number.isFinite(physical) && Number.isFinite(system) && physical < system)) {
+      setDemandWarehouses((current) => {
+        if (!(detailKey in current)) return current
+        const next = { ...current }
+        delete next[detailKey]
+        return next
+      })
+    }
+  }
+
+  function renderDemandSelect(detail) {
+    const detailKey = detail.detailKey
+    if (!needsDemandTransfer(detailKey, detail.Quantity)) return null
+    const shortage = differenceQuantity(detailKey, detail.Quantity)
+    return (
+      <div className="mt-2 space-y-1">
+        <p className="text-[11px] font-medium text-amber-800">
+          Short by {shortage}. Demand transfer from (optional):
+        </p>
+        <select
+          value={demandWarehouses[detailKey] || ''}
+          onChange={(event) => {
+            setDetailsSaved(false)
+            setPhysicalDirty(true)
+            setDemandWarehouses((current) => ({
+              ...current,
+              [detailKey]: event.target.value,
+            }))
+          }}
+          aria-label={`Demand transfer warehouse for ${detail.Label1 || 'item'}`}
+          className="w-full rounded-md border border-amber-300 bg-amber-50 px-1.5 py-1.5 text-xs text-slate-900 outline-none focus:border-amber-500"
+        >
+          <option value="">No demand transfer</option>
+          {warehouseOptions.map((warehouse) => (
+            <option key={warehouse} value={warehouse}>{warehouse}</option>
+          ))}
+        </select>
+      </div>
+    )
+  }
+
   async function savePhysicalQuantities() {
     setDetailsSaving(true)
     setDetailsError('')
@@ -101,118 +183,94 @@ export default function OrderDetailsDialog({
       setDetailsSaved(true)
       setPhysicalDirty(false)
       setControlDirty(false)
+      toast.success('Quantities saved.')
     } catch (error) {
-      setDetailsError(error.message || 'Unable to save physical quantities')
+      const message = error.message || 'Unable to save physical quantities'
+      setDetailsError(message)
+      toast.error(message)
     } finally {
       setDetailsSaving(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-2 sm:p-4" onClick={onClose}>
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="order-details-title"
-        className="max-h-[90vh] w-full max-w-3xl overflow-hidden border border-slate-200 bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden border border-slate-300 bg-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
-          <div>
-            <h2 id="order-details-title" className="text-lg font-bold text-slate-900">Order details</h2>
-            <p className="mt-1 text-sm text-slate-600">{order.orderNumber} · {order.customerName}</p>
-          </div>
+        <header className="relative shrink-0 border-b border-slate-300 px-4 pb-3 pt-4 sm:px-5 sm:pb-4 sm:pt-5">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-100"
+            className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-100"
             aria-label="Close order details"
           >
             <X className="h-4 w-4" />
           </button>
+
+          <h2 id="order-details-title" className="pr-10 text-center text-lg font-black uppercase tracking-[0.08em] text-slate-900 sm:text-2xl">
+            Preparation{' '}
+            <span className="ml-1 tracking-normal sm:ml-2">{order.orderNumber || ''}</span>
+          </h2>
+
+          <div className="mt-3 flex items-start justify-between gap-3 text-sm text-slate-800">
+            <div className="min-w-0 space-y-1">
+              <p className="break-words">
+                <span className="font-semibold">Client :</span>{' '}
+                <span className="font-medium">{order.customerName || '—'}</span>
+              </p>
+              <p>
+                <span className="font-semibold">Wilaya :</span>{' '}
+                <span className="font-medium">{order.wilaya || '—'}</span>
+              </p>
+            </div>
+            <p className="shrink-0 whitespace-nowrap">
+              <span className="font-semibold">Date :</span>{' '}
+              <span className="font-medium">{formatDate(order.createdAt || order.created_at || order.Date)}</span>
+            </p>
+          </div>
         </header>
-        <div className="max-h-[calc(90vh-80px)] overflow-auto p-5">
+
+        <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
           {detailsLoading ? (
             <p className="py-10 text-center text-sm text-slate-500">Loading order details...</p>
           ) : detailsError && !orderDetails.length ? (
             <p role="alert" className="py-10 text-center text-sm text-rose-700">{detailsError}</p>
           ) : orderDetails.length ? (
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed border-collapse text-left text-sm">
-                <colgroup>
-                  <col className="w-[28%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[30%]" />
-                  <col className="w-[30%]" />
-                </colgroup>
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    {['Item', 'System quantity', 'Physical quantity', 'Control quantity'].map((label) => (
-                      <th key={label} className="border-b border-slate-200 px-1 py-2 text-[9px] font-semibold leading-tight sm:px-3 sm:text-xs">{label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {orderDetails.map((detail) => {
-                    const detailKey = detail.detailKey
-                    const showDemandSelect = needsDemandTransfer(detailKey, detail.Quantity)
-                    const shortage = differenceQuantity(detailKey, detail.Quantity)
-                    return (
-                      <tr key={detailKey} className="border-b border-slate-100 align-top">
-                        <td className="break-words px-1 py-3 font-medium text-slate-900 sm:px-3">{detail.Label1 || '—'}</td>
-                        <td className="break-words px-1 py-3 text-slate-600 sm:px-3">{detail.Quantity ?? '—'}</td>
-                        <td className="px-1 py-2 sm:px-3">
+            <div className="w-full">
+              <div className="space-y-3 sm:hidden">
+                {orderDetails.map((detail, index) => {
+                  const detailKey = detail.detailKey
+                  return (
+                    <article key={detailKey} className="border border-slate-300 bg-white p-3">
+                      <div className="mb-2 flex items-start justify-between gap-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">N° {index + 1}</p>
+                        <p className="text-xs font-semibold text-slate-600">{formatColisage(detail)}</p>
+                      </div>
+                      <p className="text-sm font-semibold leading-snug text-slate-900">{detail.Label1 || '—'}</p>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        <div>
+                          <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Qté CMD</p>
+                          <p className="text-sm tabular-nums text-slate-800">{formatQuantity(detail.Quantity)}</p>
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Préparé</p>
                           <input
                             type="number"
                             min="0"
                             step="any"
                             value={physicalQuantities[detailKey] ?? ''}
-                            onChange={(event) => {
-                              const nextValue = event.target.value
-                              setDetailsSaved(false)
-                              setPhysicalDirty(true)
-                              setPhysicalQuantities((current) => ({ ...current, [detailKey]: nextValue }))
-                              const physical = Number(nextValue)
-                              const system = Number(detail.Quantity)
-                              if (!(Number.isFinite(physical) && Number.isFinite(system) && physical < system)) {
-                                setDemandWarehouses((current) => {
-                                  if (!(detailKey in current)) return current
-                                  const next = { ...current }
-                                  delete next[detailKey]
-                                  return next
-                                })
-                              }
-                            }}
-                            aria-label={`Physical quantity for ${detail.Label1 || 'item'}`}
-                            className="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-2 text-xs text-slate-900 outline-none focus:border-emerald-600 sm:px-3 sm:text-sm"
+                            onChange={(event) => handlePhysicalChange(detail, event.target.value)}
+                            aria-label={`Qté préparé for ${detail.Label1 || 'item'}`}
+                            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-center text-sm text-slate-900 outline-none focus:border-emerald-600"
                           />
-                          {showDemandSelect ? (
-                            <div className="mt-2 space-y-1">
-                              <p className="text-[11px] font-medium text-amber-800">
-                                Short by {shortage}. Demand transfer from (optional):
-                              </p>
-                              <select
-                                value={demandWarehouses[detailKey] || ''}
-                                onChange={(event) => {
-                                  setDetailsSaved(false)
-                                  setPhysicalDirty(true)
-                                  setDemandWarehouses((current) => ({
-                                    ...current,
-                                    [detailKey]: event.target.value,
-                                  }))
-                                }}
-                                aria-label={`Demand transfer warehouse for ${detail.Label1 || 'item'}`}
-                                className="w-full rounded-md border border-amber-300 bg-amber-50 px-1.5 py-1.5 text-xs text-slate-900 outline-none focus:border-amber-500 sm:text-sm"
-                              >
-                                <option value="">No demand transfer</option>
-                                {warehouseOptions.map((warehouse) => (
-                                  <option key={warehouse} value={warehouse}>{warehouse}</option>
-                                ))}
-                              </select>
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-1 py-2 sm:px-3">
+                        </div>
+                        <div>
+                          <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Contrôle</p>
                           <input
                             type="number"
                             min="0"
@@ -223,23 +281,92 @@ export default function OrderDetailsDialog({
                               setControlDirty(true)
                               setControlQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
                             }}
-                            aria-label={`Control quantity for ${detail.Label1 || 'item'}`}
-                            className="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-2 text-xs text-slate-900 outline-none focus:border-emerald-600 sm:px-3 sm:text-sm"
+                            aria-label={`Qté contrôle for ${detail.Label1 || 'item'}`}
+                            className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-center text-sm text-slate-900 outline-none focus:border-emerald-600"
                           />
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                        </div>
+                      </div>
+                      {renderDemandSelect(detail)}
+                    </article>
+                  )
+                })}
+              </div>
+
+              <div className="hidden sm:block">
+                <table className="w-full table-fixed border-collapse border border-slate-300 text-left text-sm">
+                  <colgroup>
+                    <col className="w-[5%]" />
+                    <col className="w-[42%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[14%]" />
+                  </colgroup>
+                  <thead className="bg-slate-100 text-[11px] uppercase tracking-wide text-slate-600">
+                    <tr>
+                      <th className="border border-slate-300 px-2 py-2 text-center font-bold">N°</th>
+                      <th className="border border-slate-300 px-3 py-2 font-bold">Désignation</th>
+                      <th className="border border-slate-300 px-2 py-2 text-right font-bold">Qté CMD</th>
+                      <th className="border border-slate-300 px-2 py-2 text-center font-bold">Colissage</th>
+                      <th className="border border-slate-300 px-2 py-2 text-center font-bold">Préparé</th>
+                      <th className="border border-slate-300 px-2 py-2 text-center font-bold">Contrôle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {orderDetails.map((detail, index) => {
+                      const detailKey = detail.detailKey
+                      return (
+                        <tr key={detailKey} className="align-top odd:bg-white even:bg-slate-50/70">
+                          <td className="border border-slate-300 px-2 py-2 text-center font-semibold text-slate-700">
+                            {index + 1}
+                          </td>
+                          <td className="break-words border border-slate-300 px-3 py-2 font-medium leading-snug whitespace-normal text-slate-900">
+                            {detail.Label1 || '—'}
+                          </td>
+                          <td className="border border-slate-300 px-2 py-2 text-right tabular-nums whitespace-nowrap text-slate-700">
+                            {formatQuantity(detail.Quantity)}
+                          </td>
+                          <td className="border border-slate-300 px-2 py-2 text-center tabular-nums whitespace-nowrap text-slate-700">
+                            {formatColisage(detail)}
+                          </td>
+                          <td className="border border-slate-300 px-2 py-2 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={physicalQuantities[detailKey] ?? ''}
+                              onChange={(event) => handlePhysicalChange(detail, event.target.value)}
+                              aria-label={`Qté préparé for ${detail.Label1 || 'item'}`}
+                              className="mx-auto block w-16 rounded-md border border-slate-300 px-1.5 py-1.5 text-center text-sm text-slate-900 outline-none focus:border-emerald-600"
+                            />
+                            {renderDemandSelect(detail)}
+                          </td>
+                          <td className="border border-slate-300 px-2 py-2 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={controlQuantities[detailKey] ?? ''}
+                              onChange={(event) => {
+                                setDetailsSaved(false)
+                                setControlDirty(true)
+                                setControlQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
+                              }}
+                              aria-label={`Qté contrôle for ${detail.Label1 || 'item'}`}
+                              className="mx-auto block w-16 rounded-md border border-slate-300 px-1.5 py-1.5 text-center text-sm text-slate-900 outline-none focus:border-emerald-600"
+                            />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
               <p className="mt-3 text-xs text-slate-500">
-                {requestingWarehouse || 'Selected warehouse'} · {orderDetails.length} line items
+                {requestingWarehouse || 'Selected warehouse'} · {orderDetails.length} ligne{orderDetails.length === 1 ? '' : 's'}
               </p>
-              {detailsError ? (
-                <p role="alert" className="mt-3 text-sm text-rose-700">{detailsError}</p>
-              ) : null}
-              <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
-                <p aria-live="polite" className="text-sm text-emerald-700">{detailsSaved ? 'Quantities saved.' : ''}</p>
+              <div className="mt-4 flex items-center justify-end border-t border-slate-200 pt-4">
                 <button
                   type="button"
                   onClick={savePhysicalQuantities}

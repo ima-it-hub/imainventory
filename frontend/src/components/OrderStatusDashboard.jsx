@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import OrderDetailsDialog from './OrderDetailsDialog'
+import { useToast } from './ToastProvider'
 
 const STATUS_COLUMNS = [
   { status: 'Pending', label: 'À préparer', accent: 'border-rose-300 bg-rose-50 text-rose-800', card: 'border-rose-200 bg-rose-50' },
@@ -45,6 +46,7 @@ export default function OrderStatusDashboard({
   const [selectedWilaya, setSelectedWilaya] = useState('')
   const [selectedSchedule, setSelectedSchedule] = useState('')
   const [draggedOrderId, setDraggedOrderId] = useState(null)
+  const toast = useToast()
   const [movingOrderId, setMovingOrderId] = useState(null)
   const [moveError, setMoveError] = useState('')
   const [detailsOrder, setDetailsOrder] = useState(null)
@@ -56,6 +58,13 @@ export default function OrderStatusDashboard({
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [orders])
+
+  useEffect(() => {
+    if (!moveError) return undefined
+    toast.error(moveError)
+    const timer = setTimeout(() => setMoveError(''), 0)
+    return () => clearTimeout(timer)
+  }, [moveError, toast])
 
   const wilayas = [...new Set(orders.map((order) => String(order.wilaya || '').trim()).filter(Boolean))]
     .sort((first, second) => first.localeCompare(second))
@@ -139,8 +148,6 @@ export default function OrderStatusDashboard({
           </label>
         </div>
       </header>
-
-      {moveError ? <p role="alert" className="text-sm text-rose-700">{moveError}</p> : null}
 
       <div className="grid h-[calc(100vh-250px)] min-h-[360px] flex-1 gap-3 overflow-hidden pb-2 md:grid-cols-3">
         {STATUS_COLUMNS.map((column) => {

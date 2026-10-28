@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Boxes, Check, MapPin, PackagePlus, Pencil, Plus, Printer, Search, Trash2, X } from 'lucide-react'
+import { useToast } from './ToastProvider'
 
 const currencyFormatter = new Intl.NumberFormat('fr-DZ', {
   style: 'currency',
@@ -41,6 +42,7 @@ function escapeHtml(value) {
 }
 
 export default function AssetManagement({ apiUrl }) {
+  const toast = useToast()
   const [assets, setAssets] = useState([])
   const [categories, setCategories] = useState([])
   const [places, setPlaces] = useState([])
@@ -62,6 +64,13 @@ export default function AssetManagement({ apiUrl }) {
     depreciationPercentage: '0',
     repairStatus: 'Réparable',
   })
+
+  useEffect(() => {
+    if (!error) return undefined
+    toast.error(error)
+    const timer = setTimeout(() => setError(''), 0)
+    return () => clearTimeout(timer)
+  }, [error, toast])
 
   function printAssetQr(asset) {
     const printWindow = window.open('', '_blank', 'width=600,height=760')
@@ -382,8 +391,6 @@ export default function AssetManagement({ apiUrl }) {
         </div>
       </div>
 
-      {error && <div role="alert" className="border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</div>}
-
       <div className="flex flex-wrap justify-end gap-2">
         <button type="button" onClick={() => { resetForm(); setActiveDialog('asset') }} disabled={!categories.length || !places.length} className="inline-flex items-center gap-2 rounded-md bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50">
           <PackagePlus className="h-4 w-4" />Add asset
@@ -528,8 +535,6 @@ export default function AssetManagement({ apiUrl }) {
                 <X className="h-4 w-4" />
               </button>
             </header>
-
-            {error && <p role="alert" className="mb-4 border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{error}</p>}
 
             {activeDialog === 'asset' ? (
               <form onSubmit={saveAsset} className="space-y-4">

@@ -1790,24 +1790,29 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
 
       const createdValue = row.Date || row.date || row['Date'];
       const createdAt = createdValue ? new Date(createdValue).toISOString() : new Date().toISOString();
+      const nextOrder = {
+        order_number: orderNumber,
+        customer_name: customerName,
+        wilaya,
+        warehouse_name: warehouseName,
+        warehouse_id: warehouseId ? Number(warehouseId) : null,
+        created_at: createdAt,
+      };
       const existing = ordersByNumber.get(orderNumber);
 
       if (existing) {
-        existing.wilaya = wilaya;
+        existing.customer_name = nextOrder.customer_name;
+        existing.wilaya = nextOrder.wilaya;
+        existing.warehouse_name = nextOrder.warehouse_name;
+        existing.warehouse_id = nextOrder.warehouse_id;
+        existing.created_at = nextOrder.created_at;
       } else {
-        ordersByNumber.set(orderNumber, {
-          order_number: orderNumber,
-          customer_name: customerName,
-          wilaya,
-          warehouse_name: warehouseName,
-          warehouse_id: warehouseId ? Number(warehouseId) : null,
-          created_at: createdAt,
-        });
+        ordersByNumber.set(orderNumber, nextOrder);
       }
     }
 
     const ordersToSync = Array.from(ordersByNumber.values());
-    let inserted = 0;
+    let upsertedOrders = 0;
 
     const orderBatchSize = 500;
     const orderUpsertSql = `
@@ -1822,30 +1827,43 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         created_at TIMESTAMPTZ
       )
       ON CONFLICT (order_number) DO UPDATE
-      SET wilaya = EXCLUDED.wilaya,
+      SET customer_name = EXCLUDED.customer_name,
+          wilaya = EXCLUDED.wilaya,
           warehouse_name = EXCLUDED.warehouse_name,
-          warehouse_id = EXCLUDED.warehouse_id
-      WHERE logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
+          warehouse_id = EXCLUDED.warehouse_id,
+          created_at = EXCLUDED.created_at
+      WHERE logistics_orders.customer_name IS DISTINCT FROM EXCLUDED.customer_name
+         OR logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
          OR logistics_orders.warehouse_name IS DISTINCT FROM EXCLUDED.warehouse_name
          OR logistics_orders.warehouse_id IS DISTINCT FROM EXCLUDED.warehouse_id
+         OR logistics_orders.created_at IS DISTINCT FROM EXCLUDED.created_at
       RETURNING id;
     `;
 
     for (let offset = 0; offset < ordersToSync.length; offset += orderBatchSize) {
       const batch = ordersToSync.slice(offset, offset + orderBatchSize);
       const result = await query(orderUpsertSql, [JSON.stringify(batch)]);
-      inserted += result.length;
+      upsertedOrders += result.length;
     }
 
     const detailSnapshots = buildOrderDetailSnapshots(detailRows);
+    let upsertedDetails = 0;
     if (detailSnapshots.length) {
-      await query(`
-        INSERT INTO logistics_order_details (order_number, details, synced_at)
-        SELECT order_number, details, NOW()
-        FROM jsonb_to_recordset($1::jsonb) AS snapshots(order_number TEXT, details JSONB)
-        ON CONFLICT (order_number) DO UPDATE
-        SET details = EXCLUDED.details, synced_at = EXCLUDED.synced_at;
-      `, [serializeOrderDetailSnapshots(detailSnapshots)]);
+      const detailBatchSize = 200;
+      const serializedSnapshots = JSON.parse(serializeOrderDetailSnapshots(detailSnapshots));
+      for (let offset = 0; offset < serializedSnapshots.length; offset += detailBatchSize) {
+        const batch = serializedSnapshots.slice(offset, offset + detailBatchSize);
+        const result = await query(`
+          INSERT INTO logistics_order_details (order_number, details, synced_at)
+          SELECT order_number, details, NOW()
+          FROM jsonb_to_recordset($1::jsonb) AS snapshots(order_number TEXT, details JSONB)
+          ON CONFLICT (order_number) DO UPDATE
+          SET details = EXCLUDED.details,
+              synced_at = NOW()
+          RETURNING order_number;
+        `, [JSON.stringify(batch)]);
+        upsertedDetails += result.length;
+      }
     }
 
     const allOrders = await query(`
@@ -1871,7 +1889,18 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       ORDER BY created_at DESC;
     `);
 
-    res.json({ ok: true, count: inserted, orders: allOrders, warehouse, message: warehouse ? `Synced ${inserted} logistics orders for ${warehouse}.` : `Synced ${inserted} logistics orders from ODBC.` });
+    const count = Math.max(upsertedOrders, upsertedDetails, ordersToSync.length);
+    res.json({
+      ok: true,
+      count,
+      upsertedOrders,
+      upsertedDetails,
+      orders: allOrders,
+      warehouse,
+      message: warehouse
+        ? `Synced ${ordersToSync.length} orders for ${warehouse} (${upsertedOrders} headers updated, ${upsertedDetails} detail sets updated).`
+        : `Synced ${ordersToSync.length} logistics orders from ODBC (${upsertedOrders} headers updated, ${upsertedDetails} detail sets updated).`,
+    });
   } catch (error) {
     console.error('ODBC logistics sync failed:', error);
     res.status(500).json({ error: 'Unable to sync logistics orders from ODBC', details: error.message });

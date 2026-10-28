@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  AlertTriangle,
   ArrowLeftRight,
   Boxes,
   CalendarRange,
   Camera,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -34,6 +32,7 @@ import AssetManagement from './components/AssetManagement'
 import TeamTasks from './components/TeamTasks'
 import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
 import DemandTransfer from './components/DemandTransfer'
+import { useToast } from './components/ToastProvider'
 import './App.css'
 
 const API_URL = import.meta.env.VITE_API_URL
@@ -67,6 +66,7 @@ const initialOrders = [
 ]
 
 function App() {
+  const toast = useToast()
   const [query, setQuery] = useState('')
   const [items, setItems] = useState([])
   const [selectedItem, setSelectedItem] = useState(null)
@@ -180,6 +180,44 @@ function App() {
   const [demandTransfersError, setDemandTransfersError] = useState('')
   const [demandTransferUpdatingId, setDemandTransferUpdatingId] = useState(null)
   const [demandTransferBulkUpdating, setDemandTransferBulkUpdating] = useState(false)
+
+  useEffect(() => {
+    if (!error) return undefined
+    toast.error(error)
+    const timer = setTimeout(() => setError(''), 0)
+    return () => clearTimeout(timer)
+  }, [error, toast])
+
+  useEffect(() => {
+    if (!result) return
+    const isSync = String(result.message || '').toLowerCase().includes('sync')
+    const title = isSync
+      ? 'Sync complete'
+      : result.status === 'MATCH'
+        ? 'Count matched'
+        : `${result.direction || result.status || 'Update'} detected`
+    const message = result.message
+      || `Expected ${result.expected}, Counted ${result.counted}, Delta ${result.delta}.`
+    toast.pushToast({
+      type: result.status === 'MATCH' ? 'success' : 'warning',
+      title,
+      message,
+    })
+  }, [result, toast])
+
+  useEffect(() => {
+    if (!demandTransfersError) return undefined
+    toast.error(demandTransfersError)
+    const timer = setTimeout(() => setDemandTransfersError(''), 0)
+    return () => clearTimeout(timer)
+  }, [demandTransfersError, toast])
+
+  useEffect(() => {
+    if (!transferDetailsError) return undefined
+    toast.error(transferDetailsError)
+    const timer = setTimeout(() => setTransferDetailsError(''), 0)
+    return () => clearTimeout(timer)
+  }, [transferDetailsError, toast])
   const [driverSearch, setDriverSearch] = useState('')
   const [orderForm, setOrderForm] = useState({
     orderNumber: '',
@@ -1632,13 +1670,7 @@ function App() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to sync logistics orders')
 
-      setOrders((data.orders || []).map((order) => ({
-        ...order,
-        orderNumber: order.orderNumber || order.order_number,
-        customerName: order.customerName || order.customer_name,
-        employeePrepared: order.employeePrepared || order.employee_prepared,
-        createdAt: order.createdAt || order.created_at,
-      })))
+      await loadOrders()
       setResult({
         status: 'MATCH',
         direction: 'MATCH',
@@ -1829,11 +1861,6 @@ function App() {
             
           </div>
 
-          {error ? (
-            <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
         </div>
       </div>
     )
@@ -2012,24 +2039,6 @@ function App() {
                 </div>
               ) : null}
             </header>
-
-            {error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
-                {error}
-              </div>
-            ) : null}
-
-            {result ? (
-              <div className={`rounded-2xl border px-4 py-3 ${result.status === 'MATCH' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
-                <div className="flex items-center gap-2 text-lg font-bold">
-                  {result.status === 'MATCH' ? <CheckCircle2 className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
-                  {result.status === 'MATCH' ? 'Count matched' : `${result.direction} detected`}
-                </div>
-                <p className="mt-1 text-sm">
-                  Expected {result.expected}, Counted {result.counted}, Delta {result.delta}. {result.message}
-                </p>
-              </div>
-            ) : null}
 
             {activeView === 'assets' ? (
               <AssetManagement apiUrl={API_URL} />

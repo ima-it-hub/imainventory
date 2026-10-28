@@ -302,8 +302,19 @@ async function getLogisticsOrderDetailsForSyncFromOdbc(warehouseFilter = null) {
 }
 
 function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false, warehouseParams = [], documentType = 4) {
+  const packingJoins = `
+    LEFT JOIN "COM_Batch" AS b ON b."Oid" = dd."Batch"
+    LEFT JOIN "COM_Item" AS i ON i."Oid" = b."Item"
+    LEFT JOIN "COM_Packing" AS p ON p."Oid" = i."DefaultPacking"
+  `;
+  const packingColumns = `
+      b."Item" AS "Item",
+      p."Coefficient" AS "Colisage",
+      p."Label1" AS "PackingLabel",
+      p."Code" AS "PackingCode"`;
+
   const selectedColumns = syncFieldsOnly
-    ? `d."Oid", d."Reference", dd."Batch", dd."Label1", dd."Quantity", dd."Document"`
+    ? `d."Oid", d."Reference", dd."Batch", dd."Label1", dd."Quantity", dd."Document",${packingColumns}`
     : `
       d."Oid",
       d."Reference",
@@ -315,6 +326,7 @@ function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false, 
       dd."Document",
       dd."Warehouse",
       dd."VWAP",
+      ${packingColumns},
       d."Date",
       d."Type",
       d."DeleteDate",
@@ -341,6 +353,7 @@ function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false, 
     SELECT ${selectedColumns}
     FROM "COM_Document" AS d
     INNER JOIN "COM_DocumentDetail" AS dd ON d."Oid" = dd."Document"
+    ${packingJoins}
     WHERE d."Type" IN (${documentType}, ${documentType})
       AND d."DeleteDate" IS NULL
       ${additionalFilters};

@@ -315,6 +315,7 @@ async function initializeDatabase() {
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS ready_at TIMESTAMP;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS packing_started_at TIMESTAMPTZ;');
+  await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(500);');
   await query(`
     DO $$ BEGIN
       ALTER TABLE logistics_orders

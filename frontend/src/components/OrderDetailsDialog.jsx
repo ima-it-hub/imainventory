@@ -242,7 +242,7 @@ export default function OrderDetailsDialog({
             <p role="alert" className="py-10 text-center text-sm text-rose-700">{detailsError}</p>
           ) : orderDetails.length ? (
             <div className="w-full">
-              <div className="space-y-3 sm:hidden">
+              <div className="space-y-3 min-[480px]:hidden">
                 {orderDetails.map((detail, index) => {
                   const detailKey = detail.detailKey
                   return (
@@ -292,7 +292,7 @@ export default function OrderDetailsDialog({
                 })}
               </div>
 
-              <div className="hidden sm:block">
+              <div className="hidden min-[480px]:block">
                 <table className="w-full table-fixed border-collapse border border-slate-300 text-left text-sm">
                   <colgroup>
                     <col className="w-[5%]" />

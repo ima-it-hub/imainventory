@@ -988,6 +988,7 @@ app.get('/api/logistics/orders', async (req, res) => {
         lo.id,
         lo.order_number AS "orderNumber",
         lo.customer_name AS "customerName",
+        lo.customer_phone AS "customerPhone",
         lo.wilaya,
         lo.warehouse_name AS "warehouseName",
         lo.warehouse_id AS "warehouseId",
@@ -1785,6 +1786,11 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       const warehouseId = row.WarehouseSource ?? row['WarehouseSource'] ?? null;
       const warehouseNameFromRow = String(row['WarehouseName'] || row.warehouseName || row['Depot'] || row.depot || '').trim();
       const warehouseName = warehouseNameFromRow || (warehouse ? String(warehouse).trim() : '') || (warehouseId !== null && warehouseId !== undefined ? String(warehouseId) : '');
+      const customerPhone = [row.Tel1, row.Tel2, row.tel1, row.tel2]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .filter((value, index, list) => list.indexOf(value) === index)
+        .join(' / ');
 
       if (!orderNumber || !customerName || !wilaya) continue;
 
@@ -1793,6 +1799,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       const nextOrder = {
         order_number: orderNumber,
         customer_name: customerName,
+        customer_phone: customerPhone || null,
         wilaya,
         warehouse_name: warehouseName,
         warehouse_id: warehouseId ? Number(warehouseId) : null,
@@ -1802,6 +1809,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
 
       if (existing) {
         existing.customer_name = nextOrder.customer_name;
+        existing.customer_phone = nextOrder.customer_phone;
         existing.wilaya = nextOrder.wilaya;
         existing.warehouse_name = nextOrder.warehouse_name;
         existing.warehouse_id = nextOrder.warehouse_id;
@@ -1816,11 +1824,12 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
 
     const orderBatchSize = 500;
     const orderUpsertSql = `
-      INSERT INTO logistics_orders (order_number, customer_name, wilaya, warehouse_name, warehouse_id, status, employee_prepared, driver_id, created_at)
-      SELECT order_number, customer_name, wilaya, warehouse_name, warehouse_id, 'Pending', NULL, NULL, created_at
+      INSERT INTO logistics_orders (order_number, customer_name, customer_phone, wilaya, warehouse_name, warehouse_id, status, employee_prepared, driver_id, created_at)
+      SELECT order_number, customer_name, customer_phone, wilaya, warehouse_name, warehouse_id, 'Pending', NULL, NULL, created_at
       FROM jsonb_to_recordset($1::jsonb) AS incoming(
         order_number TEXT,
         customer_name TEXT,
+        customer_phone TEXT,
         wilaya TEXT,
         warehouse_name TEXT,
         warehouse_id INTEGER,
@@ -1828,11 +1837,13 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       )
       ON CONFLICT (order_number) DO UPDATE
       SET customer_name = EXCLUDED.customer_name,
+          customer_phone = EXCLUDED.customer_phone,
           wilaya = EXCLUDED.wilaya,
           warehouse_name = EXCLUDED.warehouse_name,
           warehouse_id = EXCLUDED.warehouse_id,
           created_at = EXCLUDED.created_at
       WHERE logistics_orders.customer_name IS DISTINCT FROM EXCLUDED.customer_name
+         OR logistics_orders.customer_phone IS DISTINCT FROM EXCLUDED.customer_phone
          OR logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
          OR logistics_orders.warehouse_name IS DISTINCT FROM EXCLUDED.warehouse_name
          OR logistics_orders.warehouse_id IS DISTINCT FROM EXCLUDED.warehouse_id
@@ -1871,6 +1882,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         id,
         order_number AS "orderNumber",
         customer_name AS "customerName",
+        customer_phone AS "customerPhone",
         wilaya,
         warehouse_name AS "warehouseName",
         warehouse_id AS "warehouseId",

@@ -804,7 +804,22 @@ function App() {
     return `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(JSON.stringify(payload))}`
   }
 
-  function handlePrintOrderTicket(order) {
+  function calculateOrderColisCount(details = []) {
+    return details.reduce((total, detail) => {
+      const coefficient = Number(detail.Colisage ?? detail.colisage ?? detail.Coefficient ?? detail.coefficient)
+      if (!Number.isFinite(coefficient) || coefficient <= 0) return total
+
+      const physical = Number(detail.physicalQuantity)
+      const system = Number(detail.Quantity)
+      const quantity = Number.isFinite(physical) && String(detail.physicalQuantity ?? '').trim() !== ''
+        ? physical
+        : system
+      if (!Number.isFinite(quantity) || quantity <= 0) return total
+      return total + (quantity / coefficient)
+    }, 0)
+  }
+
+  async function handlePrintOrderTicket(order) {
     if (!order) return
 
     const printWindow = window.open('', '_blank', 'width=700,height=900')
@@ -813,134 +828,207 @@ function App() {
       return
     }
 
+    let colisCount = 0
+    try {
+      const details = await handleFetchOrderDetails(order)
+      colisCount = calculateOrderColisCount(details)
+    } catch (err) {
+      printWindow.close()
+      setError(err.message || 'Unable to prepare order ticket')
+      return
+    }
+
     const safeCustomer = escapeHtml(order.customerName || 'Customer')
     const safeWilaya = escapeHtml(order.wilaya || '—')
     const safeOrderNumber = escapeHtml(order.orderNumber || '—')
+    const safePhone = escapeHtml(String(order.customerPhone || order.customer_phone || '').trim() || '—')
+    const totalColis = Math.max(1, Math.ceil(Number(colisCount) || 0))
     const safeLogo = '/ima.png'
     const qrImage = buildOrderQrUrl(order)
+
+    const ticketsMarkup = Array.from({ length: totalColis }, (_, index) => {
+      const pageNumber = index + 1
+      const colisLabel = escapeHtml(`${pageNumber}/${totalColis}`)
+      return `
+          <div class="ticket">
+            <div class="media-row">
+              <img src="${safeLogo}" alt="IMA logo" />
+              <img src="${qrImage}" alt="Order QR code" />
+            </div>
+
+            <div class="center-block">
+              <h1 class="order-code">${safeOrderNumber}</h1>
+              <p class="wilaya">${safeWilaya}</p>
+            </div>
+
+            <div class="facts">
+              <div class="fact">
+                <span class="label">Client</span>
+                <span class="value">${safeCustomer}</span>
+              </div>
+              <div class="fact dark">
+                <span class="label">NB Colis</span>
+                <span class="value">${colisLabel}</span>
+              </div>
+            </div>
+
+            <div class="phone">
+              <span>N. Tel</span>
+              <strong>${safePhone}</strong>
+            </div>
+          </div>`
+    }).join('')
 
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Order Ticket</title>
+          <title>Ticket ${safeOrderNumber}</title>
           <style>
+            @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=IBM+Plex+Mono:wght@600&display=swap');
             * { box-sizing: border-box; }
-            @page { size: 100mm 100mm; margin: 0mm; }
+            @page { size: 100mm 100mm; margin: 0; }
             body {
               margin: 0;
-              background: #f8fafc;
-              font-family: Arial, sans-serif;
-              display: grid;
-              place-items: center;
-              min-height: 100vh;
-              color: #0f172a;
+              background: #ffffff;
+              color: #000000;
+              font-family: Manrope, Arial, sans-serif;
             }
             .ticket {
               width: 100mm;
               height: 100mm;
-              background: #fff;
-              border: 0.3mm solid #dfe7ee;
-              border-radius: 2mm;
-              padding: 2mm;
-              box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
-              display: flex;
-              flex-direction: column;
-              justify-content: space-between;
+              padding: 4mm;
+              background: #ffffff;
+              border: none;
               overflow: hidden;
+              box-shadow: none;
+              color: #000000;
+              page-break-after: always;
+              break-after: page;
             }
-            .top {
+            .ticket:last-child {
+              page-break-after: auto;
+              break-after: auto;
+            }
+            .media-row {
               display: flex;
               align-items: center;
-              justify-content: center;
-              gap: 0;
-              margin-bottom: 0mm;
+              justify-content: space-between;
+              gap: 6mm;
             }
-            .logo {
-              width: 40mm;
-              height: 40mm;
+            .media-row img {
+              width: 28mm;
+              height: 28mm;
               object-fit: contain;
-              border-radius: 1mm;
-              background: #f8fafc;
-              padding: 0mm;
-            }
-            h2 {
-              margin: 0;
-              font-size: 24px;
-            }
-            .order-info {
-              min-width: 0;
-              flex: 1;
-            }
-            .order-number {
-              overflow-wrap: anywhere;
-              font-size: 18px;
-              font-weight: 600;
-              color: #475569;
-            }
-            .details-row {
-              display: flex;
-              flex: 1;
-              align-items: center;
-              min-height: 0;
-              gap: 2mm;
-              margin-top: 2mm;
-              border-top: 0.3mm solid #e2e8f0;
-            }
-            .meta {
-              flex: 1;
-              min-width: 0;
-              font-size: 17px;
-              line-height: 1.3;
-            }
-            .meta > div {
-              display: grid;
-              grid-template-columns: 20mm minmax(0, 1fr);
-              column-gap: 1mm;
-              align-items: baseline;
-              margin: 0 0 2mm;
-            }
-            .meta strong {
               display: block;
-              color: #475569;
+              background: #ffffff;
+              border: none;
+              padding: 0;
             }
-            .qr-box {
-              flex: 0 0 38mm;
+            .center-block {
+              margin-top: 2.5mm;
               text-align: center;
-              padding-left: 2mm;
-              border-left: 0.3mm solid #e2e8f0;
             }
-            .qr-box img {
-              width: 35mm;
-              height: 35mm;
+            .order-code {
+              margin: 0;
+              font-family: 'IBM Plex Mono', monospace;
+              font-size: 5.8mm;
+              font-weight: 600;
+              line-height: 1;
+              letter-spacing: 0.01em;
+              color: #000000;
+            }
+            .wilaya {
+              margin: 1.4mm 0 0;
+              font-size: 3mm;
+              font-weight: 700;
+              letter-spacing: 0.04em;
+              text-transform: uppercase;
+              color: #000000;
+            }
+            .facts {
+              margin-top: 3.5mm;
+              display: grid;
+              grid-template-columns: 1.2fr 0.8fr;
+              gap: 2.5mm;
+            }
+            .fact {
+              padding: 2.4mm;
+              background: #ffffff;
+              border-left: 1mm solid #000000;
+              color: #000000;
+            }
+            .fact.dark {
+              background: #ffffff;
+              border-left-color: #000000;
+              color: #000000;
+            }
+            .fact .label {
               display: block;
-              margin: 0 auto;
+              margin-bottom: 0.8mm;
+              font-size: 2.1mm;
+              font-weight: 800;
+              letter-spacing: 0.12em;
+              text-transform: uppercase;
+              color: #000000;
+            }
+            .fact.dark .label { color: #000000; }
+            .fact .value {
+              display: block;
+              font-size: 3.4mm;
+              font-weight: 800;
+              line-height: 1.15;
+              overflow-wrap: anywhere;
+              color: #000000;
+            }
+            .fact.dark .value {
+              font-family: 'IBM Plex Mono', monospace;
+              font-size: 5mm;
+              color: #000000;
+            }
+            .phone {
+              margin-top: 2.5mm;
+              padding: 2mm 2.4mm;
+              border: 0.35mm dashed #000000;
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 2mm;
+              color: #000000;
+            }
+            .phone span {
+              font-size: 2.2mm;
+              font-weight: 800;
+              letter-spacing: 0.1em;
+              text-transform: uppercase;
+              color: #000000;
+            }
+            .phone strong {
+              flex: 1;
+              min-height: 3.5mm;
+              font-size: 2.8mm;
+              font-weight: 800;
+              text-align: right;
+              overflow-wrap: anywhere;
+              color: #000000;
             }
             @media print {
-              html, body { width: 100mm; height: 100mm; }
-              body { display: block; min-height: 0; background: white; }
-              .ticket { width: 100mm; height: 100mm; margin: 0; box-shadow: none; break-inside: avoid; }
+              body { background: #fff; }
+              .ticket {
+                margin: 0;
+                box-shadow: none;
+                page-break-after: always;
+                break-after: page;
+              }
+              .ticket:last-child {
+                page-break-after: auto;
+                break-after: auto;
+              }
             }
           </style>
         </head>
         <body>
-          <div class="ticket">
-            <div class="top">
-              <img class="logo" src="${safeLogo}" alt="Company logo" />
-            </div>
-            <div class="details-row">
-              <div class="meta">
-                <div><strong>Order:</strong><span>${safeOrderNumber}</span></div>
-                <div><strong>Client:</strong><span>${safeCustomer}</span></div>
-                <div><strong>Wilaya:</strong><span>${safeWilaya}</span></div>
-                <div><strong>NB.Colis:</strong><span>/</span></div>
-                <div><strong>N.Tel:</strong><span></span></div>
-              </div>
-              <div class="qr-box">
-                <img src="${qrImage}" alt="Order QR code" />
-              </div>
-            </div>
-          </div>
+          ${ticketsMarkup}
           <script>
             window.onload = function () {
               window.print();
@@ -1302,6 +1390,7 @@ function App() {
         ...order,
         orderNumber: order.orderNumber || order.order_number,
         customerName: order.customerName || order.customer_name,
+        customerPhone: order.customerPhone || order.customer_phone || '',
         employeePrepared: order.employeePrepared || order.employee_prepared,
         createdAt: order.createdAt || order.created_at,
       })))

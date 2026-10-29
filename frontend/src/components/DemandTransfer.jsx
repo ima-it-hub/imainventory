@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeftRight, Check, Truck } from 'lucide-react'
 
 const STATUS_OPTIONS = [
@@ -28,11 +28,21 @@ function formatDate(value) {
   return date.toLocaleString()
 }
 
+function getOtherWarehouse(demand) {
+  const isOutgoing = demand.direction === 'outgoing'
+  return String(
+    isOutgoing
+      ? (demand.sourceWarehouse || '')
+      : (demand.requestingWarehouse || ''),
+  ).trim()
+}
+
 export default function DemandTransfer({
   demands = [],
   loading = false,
   error = '',
   selectedWarehouse = '',
+  warehouses = [],
   onStatusChange,
   onQuantityChange,
   onBulkStatusChange,
@@ -40,12 +50,33 @@ export default function DemandTransfer({
   bulkUpdating = false,
 }) {
   const [quantityDrafts, setQuantityDrafts] = useState({})
+  const [warehouseFilter, setWarehouseFilter] = useState('all')
 
   useEffect(() => {
     setQuantityDrafts(Object.fromEntries(
       demands.map((demand) => [demand.id, String(demand.differenceQuantity ?? '')]),
     ))
   }, [demands])
+
+  const warehouseFilterOptions = useMemo(() => {
+    const fromDemands = [...new Set(
+      demands
+        .map((demand) => getOtherWarehouse(demand))
+        .filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b))
+
+    const fromProps = (warehouses || [])
+      .map((warehouse) => String(warehouse || '').trim())
+      .filter((warehouse) => warehouse && warehouse.toLowerCase() !== String(selectedWarehouse || '').trim().toLowerCase())
+
+    return [...new Set([...fromDemands, ...fromProps])].sort((a, b) => a.localeCompare(b))
+  }, [demands, warehouses, selectedWarehouse])
+
+  const filteredDemands = useMemo(() => {
+    if (warehouseFilter === 'all') return demands
+    const selected = warehouseFilter.toLowerCase()
+    return demands.filter((demand) => getOtherWarehouse(demand).toLowerCase() === selected)
+  }, [demands, warehouseFilter])
 
   async function commitQuantity(demand) {
     const rawValue = quantityDrafts[demand.id]
@@ -74,7 +105,7 @@ export default function DemandTransfer({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={!demands.length || bulkUpdating}
+            disabled={!filteredDemands.length || bulkUpdating}
             onClick={() => onBulkStatusChange('accepted')}
             className="inline-flex items-center gap-1.5 rounded-md border border-sky-300 bg-sky-50 px-3 py-2 text-xs font-semibold text-sky-900 hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -83,7 +114,7 @@ export default function DemandTransfer({
           </button>
           <button
             type="button"
-            disabled={!demands.length || bulkUpdating}
+            disabled={!filteredDemands.length || bulkUpdating}
             onClick={() => onBulkStatusChange('transferred')}
             className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -91,14 +122,37 @@ export default function DemandTransfer({
             Transfer all
           </button>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {demands.length} open request{demands.length === 1 ? '' : 's'}
+            {filteredDemands.length} open request{filteredDemands.length === 1 ? '' : 's'}
           </p>
         </div>
       </div>
 
+      <div className="mb-4 max-w-xs">
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Filter by warehouse
+        </label>
+        <select
+          value={warehouseFilter}
+          onChange={(event) => setWarehouseFilter(event.target.value)}
+          aria-label="Filter demand transfers by warehouse"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-emerald-500"
+        >
+          <option value="all">All warehouses</option>
+          {warehouseFilterOptions.map((warehouse) => (
+            <option key={warehouse} value={warehouse}>{warehouse}</option>
+          ))}
+        </select>
+      </div>
+
+      {error ? (
+        <p role="alert" className="mb-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          {error}
+        </p>
+      ) : null}
+
       {loading ? (
         <p className="py-12 text-center text-sm text-slate-500">Loading demand transfers...</p>
-      ) : demands.length ? (
+      ) : filteredDemands.length ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[860px] border-collapse text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-slate-500">
@@ -109,9 +163,9 @@ export default function DemandTransfer({
               </tr>
             </thead>
             <tbody>
-              {demands.map((demand) => {
+              {filteredDemands.map((demand) => {
                 const isOutgoing = demand.direction === 'outgoing'
-                const otherWarehouse = isOutgoing ? demand.sourceWarehouse : demand.requestingWarehouse
+                const otherWarehouse = getOtherWarehouse(demand)
                 const busy = updatingId === demand.id || bulkUpdating
                 return (
                   <tr key={demand.id} className="border-b border-slate-100 align-top">
@@ -182,7 +236,9 @@ export default function DemandTransfer({
           <div className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-500">
             <ArrowLeftRight className="h-5 w-5" />
           </div>
-          <p className="text-sm font-medium text-slate-700">No open demand transfers</p>
+          <p className="text-sm font-medium text-slate-700">
+            {demands.length ? 'No demand transfers for this warehouse filter' : 'No open demand transfers'}
+          </p>
           <p className="max-w-md text-sm text-slate-500">
             Incoming requests for {selectedWarehouse || 'this warehouse'} and demands you create from order details appear here.
           </p>

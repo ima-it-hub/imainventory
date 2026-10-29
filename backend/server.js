@@ -33,6 +33,7 @@ const {
 const config = require('./src/config');
 
 const app = express();
+const VENTE_RATEE_SOURCE = 'Vente ratée';
 // app.use(cors({
 //   origin(origin, callback) {
 //     const isRenderFrontend = /^https:\/\/[a-z0-9-]+\.onrender\.com$/i.test(origin || '');
@@ -42,6 +43,10 @@ const app = express();
 // }));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
+
+function isVenteRateeSource(value) {
+  return String(value || '').trim().toLowerCase() === VENTE_RATEE_SOURCE.toLowerCase();
+}
 
 function normalizeJsonValue(value) {
   if (typeof value === 'bigint') {
@@ -167,7 +172,14 @@ app.get('/api/odbc/stock', async (req, res) => {
 
 app.get('/api/warehouses', async (req, res) => {
   try {
-    const rows = await query('SELECT DISTINCT TRIM(warehouse_name) AS warehouse_name FROM inventory_items WHERE warehouse_name IS NOT NULL ORDER BY TRIM(warehouse_name) ASC;');
+    const rows = await query(`
+      SELECT DISTINCT TRIM(warehouse_name) AS warehouse_name
+      FROM inventory_items
+      WHERE warehouse_name IS NOT NULL
+        AND TRIM(warehouse_name) <> ''
+        AND LOWER(TRIM(warehouse_name)) <> 'main warehouse'
+      ORDER BY TRIM(warehouse_name) ASC;
+    `);
     const warehouses = rows.map((row) => row.warehouse_name).filter(Boolean);
     res.json({ warehouses, count: warehouses.length });
   } catch (error) {
@@ -983,6 +995,7 @@ app.get('/api/logistics/orders', async (req, res) => {
       }
     }
 
+    // List payload stays lean: never ship order-detail / physical-count JSONB (major egress sink).
     const rows = await query(`
       SELECT
         lo.id,
@@ -1017,8 +1030,7 @@ app.get('/api/logistics/orders', async (req, res) => {
         COALESCE(prepared_employee.name, lo.employee_prepared) AS "preparedBy",
         counts.controller_employee_id AS "controllerEmployeeId",
         COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy",
-        order_details.details AS "systemDetails",
-        counts.physical_quantities AS "physicalQuantities",
+        COALESCE(counts.quantities_match, false) AS "quantitiesMatch",
         lo.driver_id AS "driverId",
         d.name AS "driverName",
         lo.created_at AS "createdAt"
@@ -1027,16 +1039,11 @@ app.get('/api/logistics/orders', async (req, res) => {
       LEFT JOIN employees prepared_employee ON prepared_employee.employee_id = lo.employee_prepared
       LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
       LEFT JOIN employees controller_employee ON controller_employee.employee_id = counts.controller_employee_id
-      LEFT JOIN logistics_order_details order_details ON order_details.order_number = lo.order_number
       ${warehouseClause}
       ORDER BY lo.created_at DESC;
     `, params);
 
-    const orders = rows.map(({ systemDetails, physicalQuantities, ...order }) => ({
-      ...order,
-      quantitiesMatch: orderQuantitiesMatch(systemDetails, physicalQuantities),
-    }));
-    res.json({ orders, count: orders.length, warehouse: warehouseFilter || null });
+    res.json({ orders: rows, count: rows.length, warehouse: warehouseFilter || null });
   } catch (error) {
     console.error('Logistics orders fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch logistics orders', details: error.message });
@@ -1326,6 +1333,9 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
       : [];
     const assignedEmployee = employeeRows.length ? employeePrepared : '';
     const assignedController = controllerRows.length ? controllerEmployeeId : '';
+    const detailRows = await query('SELECT details FROM logistics_order_details WHERE order_number = $1', [orderNumber]);
+    const systemDetails = detailRows[0]?.details || [];
+    const quantitiesMatch = orderQuantitiesMatch(systemDetails, physicalQuantities);
     const rows = await query(`
       WITH updated_order AS (
         UPDATE logistics_orders
@@ -1334,15 +1344,19 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
           ELSE employee_prepared
         END
         WHERE order_number = $1
-        RETURNING employee_prepared AS "employeePrepared", warehouse_name AS "warehouseName"
+        RETURNING
+          employee_prepared AS "employeePrepared",
+          warehouse_name AS "warehouseName",
+          customer_name AS "customerName"
       ), saved_counts AS (
-        INSERT INTO logistics_order_physical_counts (order_number, physical_quantities, control_quantities, controller_employee_id, updated_at)
-        SELECT $1, $2::jsonb, $4::jsonb, NULLIF($5, ''), NOW()
+        INSERT INTO logistics_order_physical_counts (order_number, physical_quantities, control_quantities, controller_employee_id, quantities_match, updated_at)
+        SELECT $1, $2::jsonb, $4::jsonb, NULLIF($5, ''), $6, NOW()
         WHERE EXISTS (SELECT 1 FROM updated_order)
         ON CONFLICT (order_number) DO UPDATE
         SET physical_quantities = EXCLUDED.physical_quantities,
             control_quantities = EXCLUDED.control_quantities,
             controller_employee_id = COALESCE(EXCLUDED.controller_employee_id, logistics_order_physical_counts.controller_employee_id),
+            quantities_match = EXCLUDED.quantities_match,
             updated_at = NOW()
         RETURNING
           updated_at AS "updatedAt",
@@ -1352,19 +1366,20 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
         saved_counts."updatedAt",
         saved_counts."controllerEmployeeId",
         updated_order."employeePrepared",
-        updated_order."warehouseName"
+        updated_order."warehouseName",
+        updated_order."customerName"
       FROM saved_counts
       CROSS JOIN updated_order;
-    `, [orderNumber, JSON.stringify(physicalQuantities), assignedEmployee, JSON.stringify(controlQuantities), assignedController]);
+    `, [orderNumber, JSON.stringify(physicalQuantities), assignedEmployee, JSON.stringify(controlQuantities), assignedController, quantitiesMatch]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Order not found.' });
     }
 
     const orderWarehouse = requestingWarehouse || String(rows[0].warehouseName || '').trim();
-    const detailRows = await query('SELECT details FROM logistics_order_details WHERE order_number = $1', [orderNumber]);
+    const customerName = String(rows[0].customerName || '').trim();
     const orderDetails = attachSavedOrderQuantities(
-      detailRows[0]?.details || [],
+      systemDetails,
       physicalQuantities,
       controlQuantities,
     );
@@ -1388,19 +1403,21 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
       if (!orderWarehouse) {
         return res.status(400).json({ error: 'A requesting warehouse is required to create demand transfers.' });
       }
-      if (sourceWarehouse.toLowerCase() === orderWarehouse.toLowerCase()) {
+      const venteRatee = isVenteRateeSource(sourceWarehouse);
+      if (!venteRatee && sourceWarehouse.toLowerCase() === orderWarehouse.toLowerCase()) {
         return res.status(400).json({ error: 'Demand transfer source warehouse must be different from the requesting warehouse.' });
       }
 
       activeDemandKeys.push(detail.detailKey);
       await query(`
         INSERT INTO demand_transfers (
-          order_number, detail_key, product_label, system_quantity, physical_quantity,
+          order_number, detail_key, product_label, customer_name, system_quantity, physical_quantity,
           difference_quantity, requesting_warehouse, source_warehouse, status, requested_by, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', NULLIF($9, ''), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', NULLIF($10, ''), NOW())
         ON CONFLICT (order_number, detail_key) DO UPDATE
         SET product_label = EXCLUDED.product_label,
+            customer_name = EXCLUDED.customer_name,
             system_quantity = EXCLUDED.system_quantity,
             physical_quantity = EXCLUDED.physical_quantity,
             difference_quantity = EXCLUDED.difference_quantity,
@@ -1416,11 +1433,12 @@ app.put('/api/logistics/orders/:orderNumber/physical-counts', async (req, res) =
         orderNumber,
         detail.detailKey,
         String(detail.Label1 || '').trim() || 'Item',
+        customerName,
         systemQuantity,
         physicalQuantity,
         differenceQuantity,
         orderWarehouse,
-        sourceWarehouse,
+        venteRatee ? VENTE_RATEE_SOURCE : sourceWarehouse,
         assignedEmployee,
       ]);
     }
@@ -1495,18 +1513,91 @@ app.get('/api/demand-transfers', async (req, res) => {
         updated_at AS "updatedAt"
       FROM demand_transfers
       WHERE status IN ('pending', 'accepted')
+        AND LOWER(TRIM(source_warehouse)) <> LOWER(TRIM($2))
         AND (
           LOWER(TRIM(source_warehouse)) = LOWER(TRIM($1))
           OR LOWER(TRIM(requesting_warehouse)) = LOWER(TRIM($1))
         )
       ORDER BY created_at DESC, id DESC;
-    `, [warehouse]);
+    `, [warehouse, VENTE_RATEE_SOURCE]);
 
     const demands = rows.map((row) => mapDemandTransferRow(row, warehouse));
     res.json({ demands, count: demands.length, warehouse });
   } catch (error) {
     console.error('Demand transfers fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch demand transfers', details: error.message });
+  }
+});
+
+app.get('/api/vente-ratee', async (req, res) => {
+  try {
+    const warehouse = String(req.query.warehouse || '').trim();
+    const params = [VENTE_RATEE_SOURCE];
+    let warehouseClause = '';
+    if (warehouse) {
+      warehouseClause = 'AND LOWER(TRIM(dt.requesting_warehouse)) = LOWER(TRIM($2))';
+      params.push(warehouse);
+    }
+
+    const rows = await query(`
+      SELECT
+        dt.id,
+        dt.order_number AS "orderNumber",
+        dt.detail_key AS "detailKey",
+        dt.product_label AS "productLabel",
+        COALESCE(NULLIF(TRIM(dt.customer_name), ''), lo.customer_name, '') AS "customerName",
+        dt.system_quantity AS "systemQuantity",
+        dt.physical_quantity AS "physicalQuantity",
+        dt.difference_quantity AS "differenceQuantity",
+        dt.requesting_warehouse AS "requestingWarehouse",
+        dt.source_warehouse AS "sourceWarehouse",
+        dt.status,
+        dt.requested_by AS "requestedBy",
+        dt.updated_by AS "updatedBy",
+        dt.created_at AS "createdAt",
+        dt.updated_at AS "updatedAt"
+      FROM demand_transfers dt
+      LEFT JOIN logistics_orders lo ON lo.order_number = dt.order_number
+      WHERE dt.status IN ('pending', 'accepted')
+        AND LOWER(TRIM(dt.source_warehouse)) = LOWER(TRIM($1))
+        ${warehouseClause}
+      ORDER BY dt.created_at DESC, dt.id DESC;
+    `, params);
+
+    res.json({ items: rows, count: rows.length, warehouse: warehouse || null });
+  } catch (error) {
+    console.error('Vente ratée fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch vente ratée items', details: error.message });
+  }
+});
+
+app.put('/api/vente-ratee/:id/resolve', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const updatedBy = String(req.body?.updatedBy || '').trim();
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'A valid vente ratée id is required.' });
+    }
+
+    const rows = await query(`
+      UPDATE demand_transfers
+      SET status = 'transferred',
+          updated_by = NULLIF($2, ''),
+          updated_at = NOW()
+      WHERE id = $1
+        AND status IN ('pending', 'accepted')
+        AND LOWER(TRIM(source_warehouse)) = LOWER(TRIM($3))
+      RETURNING id;
+    `, [id, updatedBy, VENTE_RATEE_SOURCE]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Vente ratée item not found or already resolved.' });
+    }
+
+    res.json({ ok: true, id: rows[0].id });
+  } catch (error) {
+    console.error('Vente ratée resolve failed:', error);
+    res.status(500).json({ error: 'Unable to resolve vente ratée item', details: error.message });
   }
 });
 
@@ -1530,12 +1621,13 @@ app.put('/api/demand-transfers/bulk-status', async (req, res) => {
           updated_by = NULLIF($3, ''),
           updated_at = NOW()
       WHERE status IN ('pending', 'accepted')
+        AND LOWER(TRIM(source_warehouse)) <> LOWER(TRIM($4))
         AND (
           LOWER(TRIM(source_warehouse)) = LOWER(TRIM($1))
           OR LOWER(TRIM(requesting_warehouse)) = LOWER(TRIM($1))
         )
       RETURNING id;
-    `, [warehouse, nextStatus, updatedBy]);
+    `, [warehouse, nextStatus, updatedBy, VENTE_RATEE_SOURCE]);
 
     res.json({ ok: true, updatedCount: rows.length, status: nextStatus });
   } catch (error) {
@@ -1698,17 +1790,20 @@ app.put('/api/logistics/transfers/:reference/physical-counts', async (req, res) 
 
     const assignedEmployee = employeeRows.length ? employeePrepared : '';
     const assignedController = controllerRows.length ? controllerEmployeeId : '';
+    const detailRows = await query('SELECT details FROM logistics_transfer_details WHERE transfer_reference = $1', [reference]);
+    const quantitiesMatch = orderQuantitiesMatch(detailRows[0]?.details || [], physicalQuantities);
     const rows = await query(`
-      INSERT INTO logistics_order_physical_counts (order_number, physical_quantities, control_quantities, employee_prepared_id, controller_employee_id, updated_at)
-      VALUES ($1, $2::jsonb, $3::jsonb, NULLIF($4, ''), NULLIF($5, ''), NOW())
+      INSERT INTO logistics_order_physical_counts (order_number, physical_quantities, control_quantities, employee_prepared_id, controller_employee_id, quantities_match, updated_at)
+      VALUES ($1, $2::jsonb, $3::jsonb, NULLIF($4, ''), NULLIF($5, ''), $6, NOW())
       ON CONFLICT (order_number) DO UPDATE
       SET physical_quantities = EXCLUDED.physical_quantities,
           control_quantities = EXCLUDED.control_quantities,
           employee_prepared_id = COALESCE(EXCLUDED.employee_prepared_id, logistics_order_physical_counts.employee_prepared_id),
           controller_employee_id = COALESCE(EXCLUDED.controller_employee_id, logistics_order_physical_counts.controller_employee_id),
+          quantities_match = EXCLUDED.quantities_match,
           updated_at = NOW()
       RETURNING order_number, updated_at AS "updatedAt", employee_prepared_id AS "employeePrepared", controller_employee_id AS "controllerEmployeeId";
-    `, [reference, JSON.stringify(physicalQuantities), JSON.stringify(controlQuantities), assignedEmployee, assignedController]);
+    `, [reference, JSON.stringify(physicalQuantities), JSON.stringify(controlQuantities), assignedEmployee, assignedController, quantitiesMatch]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Transfer not found.' });
@@ -1877,37 +1972,12 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
       }
     }
 
-    const allOrders = await query(`
-      SELECT
-        id,
-        order_number AS "orderNumber",
-        customer_name AS "customerName",
-        customer_phone AS "customerPhone",
-        wilaya,
-        warehouse_name AS "warehouseName",
-        warehouse_id AS "warehouseId",
-        status,
-        employee_prepared AS "employeePrepared",
-        CASE
-          WHEN ready_at IS NOT NULL THEN EXTRACT(EPOCH FROM (ready_at - created_at))
-          ELSE NULL
-        END AS "pendingToReadySeconds",
-        CASE
-          WHEN delivered_at IS NOT NULL THEN EXTRACT(EPOCH FROM (delivered_at - created_at))
-          ELSE NULL
-        END AS "pendingToDeliveredSeconds",
-        created_at AS "createdAt"
-      FROM logistics_orders
-      ORDER BY created_at DESC;
-    `);
-
     const count = Math.max(upsertedOrders, upsertedDetails, ordersToSync.length);
     res.json({
       ok: true,
       count,
       upsertedOrders,
       upsertedDetails,
-      orders: allOrders,
       warehouse,
       message: warehouse
         ? `Synced ${ordersToSync.length} orders for ${warehouse} (${upsertedOrders} headers updated, ${upsertedDetails} detail sets updated).`

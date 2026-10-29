@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, ChevronRight, Eye, Printer, Search, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import OrderDetailsDialog from './OrderDetailsDialog'
 
 const ORDER_PAGE_SIZE = 50
@@ -49,6 +49,9 @@ export default function LogisticsOrders({
   setOrderSearch,
   orderStatusFilter,
   setOrderStatusFilter,
+  orderWilayaFilter = [],
+  setOrderWilayaFilter,
+  orderWilayaOptions = [],
   orderDeliveryFilter,
   setOrderDeliveryFilter,
   deliverySchedule = [],
@@ -68,20 +71,51 @@ export default function LogisticsOrders({
   const [currentTime, setCurrentTime] = useState(new Date())
   const [currentPage, setCurrentPage] = useState(1)
   const [detailsOrder, setDetailsOrder] = useState(null)
+  const [wilayaMenuOpen, setWilayaMenuOpen] = useState(false)
+  const wilayaMenuRef = useRef(null)
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDER_PAGE_SIZE))
   const page = Math.min(currentPage, totalPages)
   const visibleOrders = filteredOrders.slice((page - 1) * ORDER_PAGE_SIZE, page * ORDER_PAGE_SIZE)
   const scheduleDays = [...new Set(deliverySchedule.map((route) => String(route.day || '').trim()).filter(Boolean))]
     .sort((first, second) => first.localeCompare(second))
+  const selectedWilayaCount = orderWilayaFilter.length
+  const wilayaButtonLabel = selectedWilayaCount === 0
+    ? 'All wilayas'
+    : selectedWilayaCount === 1
+      ? orderWilayaFilter[0]
+      : `${selectedWilayaCount} wilayas`
 
   function showOrderDetails(order) {
     setDetailsOrder(order)
+  }
+
+  function toggleWilaya(wilaya) {
+    const value = String(wilaya || '').trim()
+    if (!value || !setOrderWilayaFilter) return
+    setCurrentPage(1)
+    setOrderWilayaFilter((current) => {
+      const list = Array.isArray(current) ? current : []
+      return list.includes(value)
+        ? list.filter((item) => item !== value)
+        : [...list, value]
+    })
   }
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (!wilayaMenuOpen) return undefined
+    function handlePointerDown(event) {
+      if (wilayaMenuRef.current && !wilayaMenuRef.current.contains(event.target)) {
+        setWilayaMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [wilayaMenuOpen])
 
   return (
     <section className="flex flex-1 flex-col border border-slate-200 bg-white p-4 shadow-none">
@@ -201,7 +235,7 @@ export default function LogisticsOrders({
             </span>
           </div> */}
 
-          <div className="mb-3 grid items-end gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
+          <div className="mb-3 grid items-end gap-3 md:grid-cols-[1.3fr_1fr_1.1fr_1fr]">
             <label className="text-xs font-semibold text-slate-600">
               Search
               <span className="relative mt-1 block">
@@ -235,6 +269,58 @@ export default function LogisticsOrders({
                 ))}
               </select>
             </label>
+
+            <div className="relative text-xs font-semibold text-slate-600" ref={wilayaMenuRef}>
+              Wilaya
+              <button
+                type="button"
+                onClick={() => setWilayaMenuOpen((open) => !open)}
+                aria-haspopup="listbox"
+                aria-expanded={wilayaMenuOpen}
+                className="mt-1 flex h-[38px] w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-left text-sm font-normal text-slate-800 outline-none focus:border-emerald-500"
+              >
+                <span className="truncate">{wilayaButtonLabel}</span>
+                <span className="ml-2 text-[10px] text-slate-400">{wilayaMenuOpen ? '▲' : '▼'}</span>
+              </button>
+              {wilayaMenuOpen ? (
+                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                  <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentPage(1)
+                        setOrderWilayaFilter?.([])
+                      }}
+                      className="text-[11px] font-semibold text-sky-700 hover:underline"
+                    >
+                      Clear
+                    </button>
+                    <span className="text-[11px] font-medium text-slate-500">
+                      {selectedWilayaCount} selected
+                    </span>
+                  </div>
+                  {orderWilayaOptions.length ? orderWilayaOptions.map((wilaya) => {
+                    const checked = orderWilayaFilter.includes(wilaya)
+                    return (
+                      <label
+                        key={wilaya}
+                        className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1.5 text-sm font-normal text-slate-800 hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleWilaya(wilaya)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        <span className="truncate">{wilaya}</span>
+                      </label>
+                    )
+                  }) : (
+                    <p className="px-1.5 py-2 text-sm font-normal text-slate-500">No wilayas available</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
 
             <label className="text-xs font-semibold text-slate-600">
               Planning de livraison

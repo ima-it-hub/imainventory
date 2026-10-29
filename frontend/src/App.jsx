@@ -6,6 +6,7 @@ import {
   Camera,
   ChevronLeft,
   ChevronRight,
+  CircleOff,
   ClipboardList,
   Clock3,
   Eye,
@@ -34,6 +35,7 @@ import TeamTasks from './components/TeamTasks'
 import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
 import OrderDetailsDialog from './components/OrderDetailsDialog'
 import DemandTransfer from './components/DemandTransfer'
+import VenteRatee from './components/VenteRatee'
 import { useToast } from './components/ToastProvider'
 import './App.css'
 
@@ -167,6 +169,7 @@ function App() {
   })
   const [orderSearch, setOrderSearch] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState('All')
+  const [orderWilayaFilter, setOrderWilayaFilter] = useState([])
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState('')
   const [transferSearch, setTransferSearch] = useState('')
   const [transferStatusFilter, setTransferStatusFilter] = useState('All')
@@ -176,6 +179,10 @@ function App() {
   const [demandTransfersError, setDemandTransfersError] = useState('')
   const [demandTransferUpdatingId, setDemandTransferUpdatingId] = useState(null)
   const [demandTransferBulkUpdating, setDemandTransferBulkUpdating] = useState(false)
+  const [venteRateeItems, setVenteRateeItems] = useState([])
+  const [venteRateeLoading, setVenteRateeLoading] = useState(false)
+  const [venteRateeError, setVenteRateeError] = useState('')
+  const [venteRateeResolvingId, setVenteRateeResolvingId] = useState(null)
 
   useEffect(() => {
     if (!error) return undefined
@@ -207,6 +214,13 @@ function App() {
     const timer = setTimeout(() => setDemandTransfersError(''), 0)
     return () => clearTimeout(timer)
   }, [demandTransfersError, toast])
+
+  useEffect(() => {
+    if (!venteRateeError) return undefined
+    toast.error(venteRateeError)
+    const timer = setTimeout(() => setVenteRateeError(''), 0)
+    return () => clearTimeout(timer)
+  }, [venteRateeError, toast])
 
   const [driverSearch, setDriverSearch] = useState('')
   const [orderForm, setOrderForm] = useState({
@@ -330,7 +344,7 @@ function App() {
     }
 
     refreshTodoCount()
-    const intervalId = window.setInterval(refreshTodoCount, 10000)
+    const intervalId = window.setInterval(refreshTodoCount, 60000)
     window.addEventListener('focus', refreshTodoCount)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
@@ -378,6 +392,7 @@ function App() {
     { key: 'status-dashboard', label: 'Status dashboard', icon: ClipboardList },
     { key: 'transfer', label: 'Transfer', icon: PackageSearch },
     { key: 'demand-transfer', label: 'Demand Transfer', icon: ArrowLeftRight },
+    { key: 'vente-ratee', label: 'Vente ratée', icon: CircleOff },
     { key: 'drivers', label: 'Drivers', icon: UserRound },
     { key: 'schedule', label: 'Delivery plan', icon: CalendarRange },
     { key: 'assets', label: 'Assets', icon: Boxes },
@@ -1400,21 +1415,24 @@ function App() {
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Unable to load warehouses')
 
-        const list = (data.warehouses || ['Main warehouse']).map((value) => String(value).trim()).filter(Boolean)
-        const preferredWarehouse = String(currentUser?.workingWarehouse || '').trim() || list[0] || ''
+        const list = (data.warehouses || [])
+          .map((value) => String(value).trim())
+          .filter((value) => value && value.toLowerCase() !== 'main warehouse')
+        const preferredWarehouse = String(currentUser?.workingWarehouse || '').trim()
+        const preferredAllowed = preferredWarehouse && preferredWarehouse.toLowerCase() !== 'main warehouse'
+          ? preferredWarehouse
+          : (list[0] || '')
         setWarehouses(list)
         setSelectedWarehouse((current) => {
           const currentValue = String(current || '').trim()
-          return currentValue || preferredWarehouse
+          if (currentValue && currentValue.toLowerCase() !== 'main warehouse' && list.includes(currentValue)) {
+            return currentValue
+          }
+          return preferredAllowed
         })
       } catch (err) {
-        const fallback = ['Main warehouse']
-        const preferredWarehouse = String(currentUser?.workingWarehouse || '').trim() || fallback[0] || ''
-        setWarehouses(fallback)
-        setSelectedWarehouse((current) => {
-          const currentValue = String(current || '').trim()
-          return currentValue || preferredWarehouse
-        })
+        setWarehouses([])
+        setSelectedWarehouse('')
         setError(err.message)
       }
     }
@@ -1612,6 +1630,46 @@ function App() {
     }
   }
 
+  async function loadVenteRateeItems() {
+    const warehouse = String(selectedWarehouse || currentUser?.workingWarehouse || '').trim()
+    setVenteRateeLoading(true)
+    setVenteRateeError('')
+    try {
+      const params = new URLSearchParams()
+      if (warehouse) params.set('warehouse', warehouse)
+      const response = await fetch(`${API_URL}/api/vente-ratee?${params.toString()}`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to fetch vente ratée items')
+      setVenteRateeItems(data.items || [])
+    } catch (error) {
+      setVenteRateeError(error.message || 'Unable to fetch vente ratée items')
+      setVenteRateeItems([])
+    } finally {
+      setVenteRateeLoading(false)
+    }
+  }
+
+  async function handleVenteRateeResolve(itemId) {
+    setVenteRateeResolvingId(itemId)
+    setVenteRateeError('')
+    try {
+      const response = await fetch(`${API_URL}/api/vente-ratee/${itemId}/resolve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          updatedBy: authenticatedEmployeeId || currentUser?.username || '',
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to resolve vente ratée item')
+      setVenteRateeItems((current) => current.filter((item) => item.id !== itemId))
+    } catch (error) {
+      setVenteRateeError(error.message || 'Unable to resolve vente ratée item')
+    } finally {
+      setVenteRateeResolvingId(null)
+    }
+  }
+
   async function handleDemandTransferStatusChange(demandId, nextStatus) {
     setDemandTransferUpdatingId(demandId)
     setDemandTransfersError('')
@@ -1710,6 +1768,9 @@ function App() {
     if (activeView === 'demand-transfer') {
       loadDemandTransfers()
     }
+    if (activeView === 'vente-ratee') {
+      loadVenteRateeItems()
+    }
   }, [activeView, selectedWarehouse, currentUser?.workingWarehouse])
 
   useEffect(() => {
@@ -1722,18 +1783,16 @@ function App() {
       refreshInProgress = true
 
       try {
-        if (activeView === 'inventory') {
-          await searchItems(query, { silent: true })
-        } else if (activeView === 'qr-scan') {
-          await searchItems('', { silent: true })
-        } else if (activeView === 'logistics' || activeView === 'status-dashboard') {
+        // Skip inventory/qr-scan/access auto-refresh — those views are user-driven and were
+        // hammering Supabase every few seconds for little benefit.
+        if (activeView === 'logistics' || activeView === 'status-dashboard') {
           await loadOrders()
         } else if (activeView === 'transfer') {
           await loadTransfers()
         } else if (activeView === 'demand-transfer') {
           await loadDemandTransfers()
-        } else if (activeView === 'access') {
-          await loadUsers()
+        } else if (activeView === 'vente-ratee') {
+          await loadVenteRateeItems()
         } else if (activeView === 'drivers') {
           const response = await fetch(`${API_URL}/api/drivers`)
           const data = await response.json()
@@ -1754,7 +1813,7 @@ function App() {
       if (!document.hidden) refreshActiveView()
     }
 
-    const intervalId = window.setInterval(refreshActiveView, 10000)
+    const intervalId = window.setInterval(refreshActiveView, 60000)
     window.addEventListener('focus', refreshActiveView)
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
@@ -1763,7 +1822,7 @@ function App() {
       window.removeEventListener('focus', refreshActiveView)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [isAuthenticated, activeView, selectedWarehouse, currentUser?.workingWarehouse, query, itemFilter])
+  }, [isAuthenticated, activeView, selectedWarehouse, currentUser?.workingWarehouse])
 
 
   async function handleSyncFromOdbc() {
@@ -1904,26 +1963,38 @@ function App() {
 
   const qrValue = selectedItem ? JSON.stringify({ sku: selectedItem.sku, id: selectedItem.id }) : '{"sku":"","id":""}'
 
+  const orderWilayaOptions = [...new Set(
+    orders
+      .map((order) => String(order?.wilaya || '').trim())
+      .filter(Boolean),
+  )].sort((first, second) => first.localeCompare(second))
+
   const filteredOrders = orders
     .filter((order) => {
       const customerName = String(order?.customerName || '').toLowerCase()
       const wilaya = String(order?.wilaya || '').toLowerCase()
+      const orderWilaya = String(order?.wilaya || '').trim()
       const orderNumber = String(order?.orderNumber || '').toLowerCase()
       const search = String(orderSearch || '').toLowerCase()
       const selectedSchedule = String(orderDeliveryFilter || '').trim().toLowerCase()
+      const selectedWilayas = (orderWilayaFilter || [])
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
 
       const matchesSearch = !search || customerName.includes(search) || wilaya.includes(search) || orderNumber.includes(search)
       const matchesStatus = orderStatusFilter === 'All' || order.status === orderStatusFilter
+      const matchesWilaya = !selectedWilayas.length
+        || selectedWilayas.includes(orderWilaya.toLowerCase())
 
       let matchesDelivery = true
       if (selectedSchedule) {
         matchesDelivery = deliverySchedule.some((route) => (
           String(route.day || '').trim().toLowerCase() === selectedSchedule
-          && String(route.wilaya || '').trim().toLowerCase() === String(order?.wilaya || '').trim().toLowerCase()
+          && String(route.wilaya || '').trim().toLowerCase() === orderWilaya.toLowerCase()
         ))
       }
 
-      return matchesSearch && matchesStatus && matchesDelivery
+      return matchesSearch && matchesStatus && matchesWilaya && matchesDelivery
     })
     .sort((a, b) => {
       const aTime = new Date(a?.createdAt || 0).getTime()
@@ -2008,7 +2079,7 @@ function App() {
   }
 
   const visibleSidebarPages = sidebarPages.filter((page) => {
-    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'demand-transfer', 'status-dashboard', 'team-tasks'].includes(page.key)
+    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'demand-transfer', 'vente-ratee', 'status-dashboard', 'team-tasks'].includes(page.key)
     return isAdminVisiblePage
       ? currentUser?.role === 'admin' || allowedPages.includes(page.key)
       : allowedPages.includes(page.key)
@@ -2122,6 +2193,8 @@ function App() {
                                 ? 'Transfer Management'
                                 : activeView === 'demand-transfer'
                                   ? 'Demand Transfer'
+                                  : activeView === 'vente-ratee'
+                                    ? 'Vente ratée'
                                         : activeView === 'status-dashboard'
                                           ? 'Order Status Dashboard'
                                             : activeView === 'team-tasks'
@@ -2137,7 +2210,7 @@ function App() {
                 </div>
               </div>
 
-              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'demand-transfer' || activeView === 'qr-scan' || activeView === 'schedule' ? (
+              {activeView === 'inventory' || activeView === 'logistics' || activeView === 'status-dashboard' || activeView === 'transfer' || activeView === 'demand-transfer' || activeView === 'vente-ratee' || activeView === 'qr-scan' || activeView === 'schedule' ? (
                 <div className="header-actions hidden items-center gap-3 md:flex">
                   <select
                     value={selectedWarehouse}
@@ -2189,11 +2262,21 @@ function App() {
                 loading={demandTransfersLoading}
                 error={demandTransfersError}
                 selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                warehouses={warehouses}
                 onStatusChange={handleDemandTransferStatusChange}
                 onQuantityChange={handleDemandTransferQuantityChange}
                 onBulkStatusChange={handleDemandTransferBulkStatusChange}
                 updatingId={demandTransferUpdatingId}
                 bulkUpdating={demandTransferBulkUpdating}
+              />
+            ) : activeView === 'vente-ratee' ? (
+              <VenteRatee
+                items={venteRateeItems}
+                loading={venteRateeLoading}
+                error={venteRateeError}
+                selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                onResolve={handleVenteRateeResolve}
+                resolvingId={venteRateeResolvingId}
               />
             ) : activeView === 'team-tasks' ? (
               <TeamTasks apiUrl={API_URL} currentUser={currentUser} users={users} />
@@ -2768,6 +2851,9 @@ function App() {
                 setOrderSearch={setOrderSearch}
                 orderStatusFilter={orderStatusFilter}
                 setOrderStatusFilter={setOrderStatusFilter}
+                orderWilayaFilter={orderWilayaFilter}
+                setOrderWilayaFilter={setOrderWilayaFilter}
+                orderWilayaOptions={orderWilayaOptions}
                 orderDeliveryFilter={orderDeliveryFilter}
                 setOrderDeliveryFilter={setOrderDeliveryFilter}
                 deliverySchedule={deliverySchedule}

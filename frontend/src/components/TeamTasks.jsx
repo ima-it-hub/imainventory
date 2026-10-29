@@ -77,7 +77,7 @@ export default function TeamTasks({ apiUrl, currentUser, users }) {
       if (!document.hidden) refreshTasks()
     }
 
-    const intervalId = window.setInterval(refreshTasks, 10000)
+    const intervalId = window.setInterval(refreshTasks, 60000)
     window.addEventListener('focus', refreshTasks)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {
@@ -113,7 +113,7 @@ export default function TeamTasks({ apiUrl, currentUser, users }) {
     setCommentsLoading(true)
     setCommentDraft('')
     loadComments()
-    const intervalId = window.setInterval(loadComments, 10000)
+    const intervalId = window.setInterval(loadComments, 30000)
     return () => {
       active = false
       window.clearInterval(intervalId)

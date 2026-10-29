@@ -245,7 +245,7 @@ async function getLogisticsOrdersFromOdbc(warehouseFilter = null) {
     LEFT JOIN "STD_Department" AS "w" ON "t"."Department" = "w"."Oid"
     WHERE "d"."Type" IN (4, 4)
       AND "d"."DeleteDate" IS NULL
-      AND ("d"."DocumentCategory4" != 9 OR "d"."DocumentCategory4" IS NULL)
+      AND ("d"."DocumentCategory4" != 9)
       ${warehouseCondition.sql || ''}
       AND "d"."Date" >= '2026-01-01';
   `;
@@ -292,7 +292,7 @@ async function getTransferSyncRowsFromOdbc(warehouseFilter = null) {
     LEFT JOIN "COM_Packing" AS "p" ON "p"."Oid" = "i"."DefaultPacking"
     WHERE "d"."Type" = 67
       AND "d"."DeleteDate" IS NULL
-      AND ("d"."DocumentCategory4" != 9 OR "d"."DocumentCategory4" IS NULL)
+      AND ("d"."DocumentCategory4" != 9)
       ${warehouseCondition.sql || ''}
       AND "d"."Date" >= '2026-01-01'
   `;
@@ -303,7 +303,7 @@ async function getTransferSyncRowsFromOdbc(warehouseFilter = null) {
 async function getLogisticsOrderDetailsForSyncFromOdbc(warehouseFilter = null) {
   const warehouseCondition = await buildWarehouseFilterSql(warehouseFilter, 'd', 'dd');
   const sql = getLogisticsOrderDetailsSql(`
-    AND (d."DocumentCategory4" != 9 OR d."DocumentCategory4" IS NULL)
+    AND (d."DocumentCategory4" != 9)
     ${warehouseCondition.sql || ''}
     AND d."Date" >= '2026-01-01'
   `, true, warehouseCondition.params);

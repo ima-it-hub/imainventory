@@ -158,6 +158,7 @@ async function initializeDatabase() {
       control_quantities JSONB NOT NULL DEFAULT '{}'::jsonb,
       employee_prepared_id VARCHAR(100),
       controller_employee_id VARCHAR(100),
+      quantities_match BOOLEAN NOT NULL DEFAULT false,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `;
@@ -207,6 +208,7 @@ async function initializeDatabase() {
       order_number VARCHAR(100) NOT NULL,
       detail_key TEXT NOT NULL,
       product_label VARCHAR(255) NOT NULL DEFAULT '',
+      customer_name VARCHAR(255) NOT NULL DEFAULT '',
       system_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
       physical_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
       difference_quantity NUMERIC(14,4) NOT NULL DEFAULT 0,
@@ -331,12 +333,24 @@ async function initializeDatabase() {
   await query(logisticsTransferDetailsTable);
   await query(demandTransfersTable);
   await query(`
+    ALTER TABLE demand_transfers
+    ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255) NOT NULL DEFAULT '';
+  `);
+  await query(`
     CREATE INDEX IF NOT EXISTS idx_demand_transfers_source_status
     ON demand_transfers (LOWER(TRIM(source_warehouse)), status);
   `);
   await query(`
     CREATE INDEX IF NOT EXISTS idx_demand_transfers_order_number
     ON demand_transfers (order_number);
+  `);
+  await query(`
+    UPDATE demand_transfers dt
+    SET customer_name = TRIM(lo.customer_name)
+    FROM logistics_orders lo
+    WHERE dt.order_number = lo.order_number
+      AND TRIM(COALESCE(dt.customer_name, '')) = ''
+      AND TRIM(COALESCE(lo.customer_name, '')) <> '';
   `);
   await query(assetCategoriesTable);
   await query(assetPlacesTable);
@@ -375,6 +389,38 @@ async function initializeDatabase() {
   await query(`
     ALTER TABLE logistics_order_physical_counts
     ADD COLUMN IF NOT EXISTS controller_employee_id VARCHAR(100);
+  `);
+  await query(`
+    ALTER TABLE logistics_order_physical_counts
+    ADD COLUMN IF NOT EXISTS quantities_match BOOLEAN NOT NULL DEFAULT false;
+  `);
+  // One-time backfill so list queries can avoid shipping order-detail JSONB.
+  await query(`
+    UPDATE logistics_order_physical_counts counts
+    SET quantities_match = COALESCE((
+      SELECT
+        jsonb_array_length(COALESCE(d.details, '[]'::jsonb)) > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(COALESCE(d.details, '[]'::jsonb)) AS elem(value)
+          CROSS JOIN LATERAL (
+            SELECT (
+              '[' || concat_ws(',',
+                to_jsonb(COALESCE(elem.value->>'Document', elem.value->>'document', ''))::text,
+                to_jsonb(COALESCE(elem.value->>'Batch', elem.value->>'batch', ''))::text,
+                to_jsonb(COALESCE(elem.value->>'Label1', elem.value->>'label1', ''))::text,
+                to_jsonb(COALESCE(elem.value->>'Quantity', elem.value->>'quantity', ''))::text
+              ) || ']'
+            ) AS detail_key,
+            NULLIF(COALESCE(elem.value->>'Quantity', elem.value->>'quantity', ''), '')::numeric AS system_qty
+          ) AS line
+          WHERE counts.physical_quantities ->> line.detail_key IS NULL
+            OR NULLIF(counts.physical_quantities ->> line.detail_key, '')::numeric IS DISTINCT FROM line.system_qty
+        )
+      FROM logistics_order_details d
+      WHERE d.order_number = counts.order_number
+    ), false)
+    WHERE counts.quantities_match = false;
   `);
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS driver_id INTEGER REFERENCES drivers(id) ON DELETE SET NULL;');
   await query(sampleDrivers);

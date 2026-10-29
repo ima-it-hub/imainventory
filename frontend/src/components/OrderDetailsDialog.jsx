@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Printer, X } from 'lucide-react'
 import { useToast } from './ToastProvider'
 
+export const VENTE_RATEE_SOURCE = 'Vente ratée'
+
 function formatQuantity(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) return '—'
@@ -155,6 +157,7 @@ export default function OrderDetailsDialog({
           className="w-full rounded-md border border-amber-300 bg-amber-50 px-1.5 py-1.5 text-xs text-slate-900 outline-none focus:border-amber-500"
         >
           <option value="">No demand transfer</option>
+          <option value={VENTE_RATEE_SOURCE}>{VENTE_RATEE_SOURCE}</option>
           {warehouseOptions.map((warehouse) => (
             <option key={warehouse} value={warehouse}>{warehouse}</option>
           ))}

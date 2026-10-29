@@ -1,4 +1,4 @@
-const VALID_PAGES = ['inventory', 'logistics', 'status-dashboard', 'team-tasks', 'transfer', 'demand-transfer', 'drivers', 'schedule', 'qr-scan', 'assets'];
+const VALID_PAGES = ['inventory', 'logistics', 'status-dashboard', 'team-tasks', 'transfer', 'demand-transfer', 'vente-ratee', 'drivers', 'schedule', 'qr-scan', 'assets'];
 
 const ADMIN_CREDENTIALS = {
   username: 'admin',

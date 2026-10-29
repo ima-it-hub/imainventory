@@ -152,7 +152,7 @@ export default function AssetManagement({ apiUrl }) {
       if (!document.hidden) refreshData()
     }
 
-    const intervalId = window.setInterval(refreshData, 10000)
+    const intervalId = window.setInterval(refreshData, 60000)
     window.addEventListener('focus', refreshData)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => {

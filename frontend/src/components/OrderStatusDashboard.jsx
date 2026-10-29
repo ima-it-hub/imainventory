@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import OrderDetailsDialog from './OrderDetailsDialog'
 import { useToast } from './ToastProvider'
 
@@ -43,7 +43,7 @@ export default function OrderStatusDashboard({
   selectedWarehouse,
   warehouses = [],
 }) {
-  const [selectedWilaya, setSelectedWilaya] = useState('')
+  const [selectedWilayas, setSelectedWilayas] = useState([])
   const [selectedSchedule, setSelectedSchedule] = useState('')
   const [draggedOrderId, setDraggedOrderId] = useState(null)
   const toast = useToast()
@@ -51,6 +51,8 @@ export default function OrderStatusDashboard({
   const [moveError, setMoveError] = useState('')
   const [detailsOrder, setDetailsOrder] = useState(null)
   const [now, setNow] = useState(() => Date.now())
+  const [wilayaMenuOpen, setWilayaMenuOpen] = useState(false)
+  const wilayaMenuRef = useRef(null)
 
   useEffect(() => {
     const hasPackingOrders = orders.some((order) => order.status === 'Packing')
@@ -66,14 +68,44 @@ export default function OrderStatusDashboard({
     return () => clearTimeout(timer)
   }, [moveError, toast])
 
+  useEffect(() => {
+    if (!wilayaMenuOpen) return undefined
+    function handlePointerDown(event) {
+      if (wilayaMenuRef.current && !wilayaMenuRef.current.contains(event.target)) {
+        setWilayaMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [wilayaMenuOpen])
+
   const wilayas = [...new Set(orders.map((order) => String(order.wilaya || '').trim()).filter(Boolean))]
     .sort((first, second) => first.localeCompare(second))
   const scheduleDays = [...new Set(deliverySchedule.map((route) => String(route.day || '').trim()).filter(Boolean))]
     .sort((first, second) => first.localeCompare(second))
 
+  const selectedWilayaCount = selectedWilayas.length
+  const wilayaButtonLabel = selectedWilayaCount === 0
+    ? 'Toutes les wilayas'
+    : selectedWilayaCount === 1
+      ? selectedWilayas[0]
+      : `${selectedWilayaCount} wilayas`
+
+  function toggleWilaya(wilaya) {
+    const value = String(wilaya || '').trim()
+    if (!value) return
+    setSelectedWilayas((current) => (
+      current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value]
+    ))
+  }
+
+  const selectedWilayaSet = new Set(selectedWilayas.map((wilaya) => normalize(wilaya)))
+
   const visibleOrders = orders.filter((order) => {
     if (order.status === 'Delivered') return false
-    if (selectedWilaya && normalize(order.wilaya) !== normalize(selectedWilaya)) return false
+    if (selectedWilayaSet.size && !selectedWilayaSet.has(normalize(order.wilaya))) return false
     if (selectedSchedule) {
       const hasScheduledDelivery = deliverySchedule.some((route) => (
         normalize(route.day) === normalize(selectedSchedule)
@@ -124,23 +156,60 @@ export default function OrderStatusDashboard({
           <h2 className="text-xl font-black text-slate-900">Suivi des commandes</h2>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 md:min-w-[440px]">
-          <label className="text-xs font-semibold text-slate-600">
+          <div className="relative text-xs font-semibold text-slate-600" ref={wilayaMenuRef}>
             Wilaya
-            <select
-              value={selectedWilaya}
-              onChange={(event) => setSelectedWilaya(event.target.value)}
-              className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800"
+            <button
+              type="button"
+              onClick={() => setWilayaMenuOpen((open) => !open)}
+              aria-haspopup="listbox"
+              aria-expanded={wilayaMenuOpen}
+              className="mt-1 flex h-[38px] w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 text-left text-sm font-normal text-slate-800 outline-none focus:border-emerald-500"
             >
-              <option value="">Toutes les wilayas</option>
-              {wilayas.map((wilaya) => <option key={wilaya} value={wilaya}>{wilaya}</option>)}
-            </select>
-          </label>
+              <span className="truncate">{wilayaButtonLabel}</span>
+              <span className="ml-2 text-[10px] text-slate-400">{wilayaMenuOpen ? '▲' : '▼'}</span>
+            </button>
+            {wilayaMenuOpen ? (
+              <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                <div className="mb-2 flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWilayas([])}
+                    className="text-[11px] font-semibold text-sky-700 hover:underline"
+                  >
+                    Clear
+                  </button>
+                  <span className="text-[11px] font-medium text-slate-500">
+                    {selectedWilayaCount} selected
+                  </span>
+                </div>
+                {wilayas.length ? wilayas.map((wilaya) => {
+                  const checked = selectedWilayas.includes(wilaya)
+                  return (
+                    <label
+                      key={wilaya}
+                      className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1.5 text-sm font-normal text-slate-800 hover:bg-slate-50"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleWilaya(wilaya)}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="truncate">{wilaya}</span>
+                    </label>
+                  )
+                }) : (
+                  <p className="px-1.5 py-2 text-xs text-slate-500">Aucune wilaya</p>
+                )}
+              </div>
+            ) : null}
+          </div>
           <label className="text-xs font-semibold text-slate-600">
             Planning de livraison
             <select
               value={selectedSchedule}
               onChange={(event) => setSelectedSchedule(event.target.value)}
-              className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800"
+              className="mt-1 block h-[38px] w-full rounded-md border border-slate-300 bg-white px-3 text-sm font-normal text-slate-800"
             >
               <option value="">Tous les plannings</option>
               {scheduleDays.map((day) => <option key={day} value={day}>{day}</option>)}
@@ -175,6 +244,7 @@ export default function OrderStatusDashboard({
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                 {columnOrders.map((order) => {
                   const elapsed = packingDisplaySeconds(order)
+                  const orderCode = order.orderNumber || order.order_number || ''
                   const timerClasses = order.status === 'Ready'
                     ? 'border-indigo-300 bg-white/90 text-indigo-800'
                     : 'border-orange-300 bg-white/90 text-orange-800'
@@ -201,7 +271,7 @@ export default function OrderStatusDashboard({
                       }}
                       tabIndex={0}
                       onClick={() => setDetailsOrder(order)}
-                      aria-label={`${order.customerName || 'Client'}, ${order.wilaya || 'Wilaya inconnue'}, statut ${column.label}. Utilisez les flèches gauche et droite pour changer le statut.`}
+                      aria-label={`${orderCode || 'Commande'}, ${order.customerName || 'Client'}, ${order.wilaya || 'Wilaya inconnue'}, statut ${column.label}. Utilisez les flèches gauche et droite pour changer le statut.`}
                       className={`relative cursor-grab border p-3 pr-16 shadow-sm transition hover:shadow ${column.card} ${draggedOrderId === order.id ? 'opacity-40' : ''} ${movingOrderId === order.id ? 'cursor-wait opacity-60' : ''}`}
                     >
                       {elapsed !== null ? (
@@ -209,7 +279,10 @@ export default function OrderStatusDashboard({
                           {formatElapsed(elapsed)}
                         </p>
                       ) : null}
-                      <p className="text-sm font-bold text-slate-900">{order.customerName || 'Client inconnu'}</p>
+                      <p className="font-mono text-xs font-bold uppercase tracking-wide text-slate-700">
+                        {orderCode || '—'}
+                      </p>
+                      <p className="mt-1 text-sm font-bold text-slate-900">{order.customerName || 'Client inconnu'}</p>
                       <p className="mt-1 text-xs text-slate-600">{order.wilaya || 'Wilaya inconnue'}</p>
                     </article>
                   )

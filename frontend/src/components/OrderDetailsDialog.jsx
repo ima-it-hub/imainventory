@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { X } from 'lucide-react'
+import { Printer, X } from 'lucide-react'
 import { useToast } from './ToastProvider'
 
 function formatQuantity(value) {
@@ -42,19 +42,22 @@ export default function OrderDetailsDialog({
   authenticatedEmployeeId,
   selectedWarehouse,
   warehouses = [],
+  enableDemandTransfer = true,
+  onPrintTicket,
+  warehouseFooter,
 }) {
   const toast = useToast()
   const [orderDetails, setOrderDetails] = useState([])
   const [detailsLoading, setDetailsLoading] = useState(true)
   const [detailsSaving, setDetailsSaving] = useState(false)
   const [detailsError, setDetailsError] = useState('')
-  const [detailsSaved, setDetailsSaved] = useState(false)
   const [physicalQuantities, setPhysicalQuantities] = useState({})
   const [controlQuantities, setControlQuantities] = useState({})
   const [demandWarehouses, setDemandWarehouses] = useState({})
   const [physicalDirty, setPhysicalDirty] = useState(false)
   const [controlDirty, setControlDirty] = useState(false)
 
+  const documentCode = order.orderNumber || order.reference || ''
   const requestingWarehouse = String(
     order.warehouseName || order.warehouse_name || selectedWarehouse || '',
   ).trim()
@@ -77,11 +80,13 @@ export default function OrderDetailsDialog({
         setControlQuantities(Object.fromEntries(
           details.map((detail) => [detail.detailKey, detail.controlQuantity ?? '']),
         ))
-        setDemandWarehouses(Object.fromEntries(
-          details
-            .filter((detail) => detail.demandSourceWarehouse)
-            .map((detail) => [detail.detailKey, detail.demandSourceWarehouse]),
-        ))
+        if (enableDemandTransfer) {
+          setDemandWarehouses(Object.fromEntries(
+            details
+              .filter((detail) => detail.demandSourceWarehouse)
+              .map((detail) => [detail.detailKey, detail.demandSourceWarehouse]),
+          ))
+        }
       } catch (error) {
         if (isMounted) setDetailsError(error.message || 'Unable to fetch order details')
       } finally {
@@ -93,9 +98,10 @@ export default function OrderDetailsDialog({
     return () => {
       isMounted = false
     }
-  }, [order.id, order.orderNumber])
+  }, [order.id, order.orderNumber, order.reference, enableDemandTransfer])
 
   function needsDemandTransfer(detailKey, systemQuantity) {
+    if (!enableDemandTransfer) return false
     const rawPhysical = physicalQuantities[detailKey]
     if (rawPhysical === '' || rawPhysical === null || rawPhysical === undefined) return false
     const physical = Number(rawPhysical)
@@ -112,9 +118,9 @@ export default function OrderDetailsDialog({
 
   function handlePhysicalChange(detail, nextValue) {
     const detailKey = detail.detailKey
-    setDetailsSaved(false)
     setPhysicalDirty(true)
     setPhysicalQuantities((current) => ({ ...current, [detailKey]: nextValue }))
+    if (!enableDemandTransfer) return
     const physical = Number(nextValue)
     const system = Number(detail.Quantity)
     if (!(Number.isFinite(physical) && Number.isFinite(system) && physical < system)) {
@@ -134,12 +140,11 @@ export default function OrderDetailsDialog({
     return (
       <div className="mt-2 space-y-1">
         <p className="text-[11px] font-medium text-amber-800">
-          Short by {shortage}. Demand transfer from (optional):
+          Short by {shortage}
         </p>
         <select
           value={demandWarehouses[detailKey] || ''}
           onChange={(event) => {
-            setDetailsSaved(false)
             setPhysicalDirty(true)
             setDemandWarehouses((current) => ({
               ...current,
@@ -161,14 +166,15 @@ export default function OrderDetailsDialog({
   async function savePhysicalQuantities() {
     setDetailsSaving(true)
     setDetailsError('')
-    setDetailsSaved(false)
 
-    const activeDemandTransfers = Object.fromEntries(
-      orderDetails
-        .filter((detail) => needsDemandTransfer(detail.detailKey, detail.Quantity))
-        .map((detail) => [detail.detailKey, String(demandWarehouses[detail.detailKey] || '').trim()])
-        .filter(([, warehouse]) => warehouse),
-    )
+    const activeDemandTransfers = enableDemandTransfer
+      ? Object.fromEntries(
+        orderDetails
+          .filter((detail) => needsDemandTransfer(detail.detailKey, detail.Quantity))
+          .map((detail) => [detail.detailKey, String(demandWarehouses[detail.detailKey] || '').trim()])
+          .filter(([, warehouse]) => warehouse),
+      )
+      : {}
 
     try {
       await onSavePhysicalQuantities(
@@ -180,7 +186,6 @@ export default function OrderDetailsDialog({
         activeDemandTransfers,
         requestingWarehouse,
       )
-      setDetailsSaved(true)
       setPhysicalDirty(false)
       setControlDirty(false)
       toast.success('Quantities saved.')
@@ -192,6 +197,11 @@ export default function OrderDetailsDialog({
       setDetailsSaving(false)
     }
   }
+
+  const linesLabel = `${orderDetails.length} ligne${orderDetails.length === 1 ? '' : 's'}`
+  const footerLabel = warehouseFooter
+    ? `${warehouseFooter} · ${linesLabel}`
+    : `${requestingWarehouse || 'Selected warehouse'} · ${linesLabel}`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-2 sm:p-4" onClick={onClose}>
@@ -214,7 +224,7 @@ export default function OrderDetailsDialog({
 
           <h2 id="order-details-title" className="pr-10 text-center text-lg font-black uppercase tracking-[0.08em] text-slate-900 sm:text-2xl">
             Preparation{' '}
-            <span className="ml-1 tracking-normal sm:ml-2">{order.orderNumber || ''}</span>
+            <span className="ml-1 tracking-normal sm:ml-2">{documentCode}</span>
           </h2>
 
           <div className="mt-3 flex items-start justify-between gap-3 text-sm text-slate-800">
@@ -230,7 +240,7 @@ export default function OrderDetailsDialog({
             </div>
             <p className="shrink-0 whitespace-nowrap">
               <span className="font-semibold">Date :</span>{' '}
-              <span className="font-medium">{formatDate(order.createdAt || order.created_at || order.Date)}</span>
+              <span className="font-medium">{formatDate(order.createdAt || order.created_at || order.Date || order.transferDate)}</span>
             </p>
           </div>
         </header>
@@ -277,7 +287,6 @@ export default function OrderDetailsDialog({
                             step="any"
                             value={controlQuantities[detailKey] ?? ''}
                             onChange={(event) => {
-                              setDetailsSaved(false)
                               setControlDirty(true)
                               setControlQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
                             }}
@@ -348,7 +357,6 @@ export default function OrderDetailsDialog({
                               step="any"
                               value={controlQuantities[detailKey] ?? ''}
                               onChange={(event) => {
-                                setDetailsSaved(false)
                                 setControlDirty(true)
                                 setControlQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
                               }}
@@ -363,10 +371,18 @@ export default function OrderDetailsDialog({
                 </table>
               </div>
 
-              <p className="mt-3 text-xs text-slate-500">
-                {requestingWarehouse || 'Selected warehouse'} · {orderDetails.length} ligne{orderDetails.length === 1 ? '' : 's'}
-              </p>
-              <div className="mt-4 flex items-center justify-end border-t border-slate-200 pt-4">
+              <p className="mt-3 text-xs text-slate-500">{footerLabel}</p>
+              <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 pt-4">
+                {onPrintTicket && (
+                  <button
+                    type="button"
+                    onClick={() => onPrintTicket(order)}
+                    className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print e-ticket
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={savePhysicalQuantities}

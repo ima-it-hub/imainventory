@@ -12,6 +12,7 @@ import {
   KeyRound,
   Menu,
   PackageSearch,
+  Printer,
   QrCode,
   RefreshCcw,
   Search,
@@ -150,12 +151,6 @@ function App() {
   const [orders, setOrders] = useState([])
   const [transfers, setTransfers] = useState([])
   const [transferToView, setTransferToView] = useState(null)
-  const [transferDetails, setTransferDetails] = useState([])
-  const [transferDetailsLoading, setTransferDetailsLoading] = useState(false)
-  const [transferDetailsError, setTransferDetailsError] = useState('')
-  const [transferPhysicalQuantities, setTransferPhysicalQuantities] = useState({})
-  const [transferControlQuantities, setTransferControlQuantities] = useState({})
-  const [transferSaved, setTransferSaved] = useState(false)
   const [drivers, setDrivers] = useState([])
   const [deliverySchedule, setDeliverySchedule] = useState([])
   const [scheduleForm, setScheduleForm] = useState({
@@ -213,12 +208,6 @@ function App() {
     return () => clearTimeout(timer)
   }, [demandTransfersError, toast])
 
-  useEffect(() => {
-    if (!transferDetailsError) return undefined
-    toast.error(transferDetailsError)
-    const timer = setTimeout(() => setTransferDetailsError(''), 0)
-    return () => clearTimeout(timer)
-  }, [transferDetailsError, toast])
   const [driverSearch, setDriverSearch] = useState('')
   const [orderForm, setOrderForm] = useState({
     orderNumber: '',
@@ -792,17 +781,30 @@ function App() {
     printWindow.document.close()
   }
 
+  function buildTicketQrUrl(payload) {
+    return `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(JSON.stringify(payload))}`
+  }
+
   function buildOrderQrUrl(order) {
-    const payload = {
+    return buildTicketQrUrl({
       type: 'order',
       id: order?.id,
       orderNumber: order?.orderNumber || '',
       customerName: order?.customerName || '',
       wilaya: order?.wilaya || '',
       createdAt: order?.createdAt || '',
-    }
+    })
+  }
 
-    return `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(JSON.stringify(payload))}`
+  function buildTransferQrUrl(transfer) {
+    return buildTicketQrUrl({
+      type: 'transfer',
+      id: transfer?.id,
+      reference: transfer?.reference || transfer?.orderNumber || '',
+      customerName: transfer?.customerName || '',
+      wilaya: transfer?.wilaya || transfer?.destinationWarehouse || '',
+      createdAt: transfer?.createdAt || transfer?.transferDate || '',
+    })
   }
 
   function calculateOrderColisCount(details = []) {
@@ -818,36 +820,25 @@ function App() {
     }, 0)
   }
 
-  async function handlePrintOrderTicket(order) {
-    if (!order) return
-
-    let colisCount = 0
-    try {
-      const details = await handleFetchOrderDetails(order)
-      colisCount = calculateOrderColisCount(details)
-    } catch (err) {
-      setError(err.message || 'Unable to prepare order ticket')
-      return
-    }
-
-    const totalColis = Math.ceil(Number(colisCount) || 0)
-    if (totalColis <= 0) {
-      setError('Enter and save prepared quantities before printing tickets.')
-      return
-    }
-
+  function openEticketPrintWindow({
+    documentCode,
+    customerName,
+    wilaya,
+    phone,
+    qrImage,
+    totalColis,
+  }) {
     const printWindow = window.open('', '_blank', 'width=700,height=900')
     if (!printWindow) {
       setError('Your browser blocked the print window. Please allow pop-ups and try again.')
       return
     }
 
-    const safeCustomer = escapeHtml(order.customerName || 'Customer')
-    const safeWilaya = escapeHtml(order.wilaya || '—')
-    const safeOrderNumber = escapeHtml(order.orderNumber || '—')
-    const safePhone = escapeHtml(String(order.customerPhone || order.customer_phone || '').trim() || '—')
+    const safeCustomer = escapeHtml(customerName || 'Customer')
+    const safeWilaya = escapeHtml(wilaya || '—')
+    const safeOrderNumber = escapeHtml(documentCode || '—')
+    const safePhone = escapeHtml(String(phone || '').trim() || '—')
     const safeLogo = '/ima.png'
-    const qrImage = buildOrderQrUrl(order)
 
     const ticketsMarkup = Array.from({ length: totalColis }, (_, index) => {
       const pageNumber = index + 1
@@ -856,7 +847,7 @@ function App() {
           <div class="ticket">
             <div class="media-row">
               <img class="logo" src="${safeLogo}" alt="IMA logo" />
-              <img class="qr" src="${qrImage}" alt="Order QR code" />
+              <img class="qr" src="${qrImage}" alt="Document QR code" />
             </div>
 
             <div class="center-block">
@@ -1088,6 +1079,62 @@ function App() {
       </html>
     `)
     printWindow.document.close()
+  }
+
+  async function handlePrintOrderTicket(order) {
+    if (!order) return
+
+    let colisCount = 0
+    try {
+      const details = await handleFetchOrderDetails(order)
+      colisCount = calculateOrderColisCount(details)
+    } catch (err) {
+      setError(err.message || 'Unable to prepare order ticket')
+      return
+    }
+
+    const totalColis = Math.ceil(Number(colisCount) || 0)
+    if (totalColis <= 0) {
+      setError('Enter and save prepared quantities before printing tickets.')
+      return
+    }
+
+    openEticketPrintWindow({
+      documentCode: order.orderNumber || '—',
+      customerName: order.customerName || 'Customer',
+      wilaya: order.wilaya || '—',
+      phone: order.customerPhone || order.customer_phone || '',
+      qrImage: buildOrderQrUrl(order),
+      totalColis,
+    })
+  }
+
+  async function handlePrintTransferTicket(transfer) {
+    if (!transfer) return
+
+    let colisCount = 0
+    try {
+      const details = await handleFetchTransferDetails(transfer)
+      colisCount = calculateOrderColisCount(details)
+    } catch (err) {
+      setError(err.message || 'Unable to prepare transfer ticket')
+      return
+    }
+
+    const totalColis = Math.ceil(Number(colisCount) || 0)
+    if (totalColis <= 0) {
+      setError('Enter and save prepared quantities before printing tickets.')
+      return
+    }
+
+    openEticketPrintWindow({
+      documentCode: transfer.reference || transfer.orderNumber || '—',
+      customerName: transfer.customerName || 'Transfer',
+      wilaya: transfer.wilaya || transfer.destinationWarehouse || '—',
+      phone: transfer.customerPhone || transfer.customer_phone || '',
+      qrImage: buildTransferQrUrl(transfer),
+      totalColis,
+    })
   }
 
   useEffect(() => {
@@ -1718,50 +1765,6 @@ function App() {
     }
   }, [isAuthenticated, activeView, selectedWarehouse, currentUser?.workingWarehouse, query, itemFilter])
 
-  useEffect(() => {
-    if (!transferToView) {
-      setTransferDetails([])
-      setTransferDetailsError('')
-      setTransferPhysicalQuantities({})
-      setTransferControlQuantities({})
-      setTransferSaved(false)
-      return
-    }
-
-    let isMounted = true
-
-    async function loadTransferDetails() {
-      setTransferDetailsLoading(true)
-      setTransferDetailsError('')
-      setTransferPhysicalQuantities({})
-      setTransferControlQuantities({})
-      setTransferSaved(false)
-
-      try {
-        const details = await handleFetchTransferDetails(transferToView)
-        if (!isMounted) return
-
-        setTransferDetails(details)
-        setTransferPhysicalQuantities(Object.fromEntries(
-          details.map((detail) => [detail.detailKey, detail.physicalQuantity ?? '']),
-        ))
-        setTransferControlQuantities(Object.fromEntries(
-          details.map((detail) => [detail.detailKey, detail.controlQuantity ?? '']),
-        ))
-      } catch (error) {
-        if (isMounted) {
-          setTransferDetailsError(error.message || 'Unable to fetch transfer details')
-        }
-      } finally {
-        if (isMounted) setTransferDetailsLoading(false)
-      }
-    }
-
-    loadTransferDetails()
-    return () => {
-      isMounted = false
-    }
-  }, [transferToView])
 
   async function handleSyncFromOdbc() {
     setSyncingItems(true)
@@ -2398,15 +2401,26 @@ function App() {
                             </select>
                           </td>
                           <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                            <button
-                              type="button"
-                              onClick={() => setTransferToView(transfer)}
-                              className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
-                              title="View transfer details"
-                              aria-label={`View details for transfer ${transfer.reference}`}
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setTransferToView(transfer)}
+                                className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
+                                title="View transfer details"
+                                aria-label={`View details for transfer ${transfer.reference}`}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePrintTransferTicket(transfer)}
+                                className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
+                                title="Print transfer e-ticket"
+                                aria-label={`Print e-ticket for transfer ${transfer.reference}`}
+                              >
+                                <Printer className="h-4 w-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )) : (
@@ -2447,109 +2461,33 @@ function App() {
                 </div>
 
                 {transferToView && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setTransferToView(null)}>
-                    <section role="dialog" aria-modal="true" className="max-h-[90vh] w-full max-w-2xl overflow-hidden border border-slate-200 bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
-                      <header className="flex items-start justify-between border-b border-slate-200 px-5 py-4">
-                        <div>
-                          <h2 className="text-lg font-bold text-slate-900">Transfer details</h2>
-                          <p className="mt-1 text-sm text-slate-600">{transferToView.reference} · {transferToView.customerName || 'Transfer'}</p>
-                        </div>
-                        <button type="button" onClick={() => setTransferToView(null)} className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-100" aria-label="Close transfer details">
-                          <X className="h-4 w-4" />
-                        </button>
-                      </header>
-
-                      <div className="max-h-[calc(90vh-80px)] overflow-auto p-5">
-                        {transferDetailsLoading ? (
-                          <p className="py-10 text-center text-sm text-slate-500">Loading transfer details...</p>
-                        ) : transferDetailsError ? (
-                          <p role="alert" className="py-10 text-center text-sm text-rose-700">{transferDetailsError}</p>
-                        ) : transferDetails.length ? (
-                          <div className="overflow-x-auto">
-                            <table className="w-full table-fixed border-collapse text-left text-sm">
-                              <colgroup>
-                                <col className="w-[34%]" />
-                                <col className="w-[15%]" />
-                                <col className="w-[25.5%]" />
-                                <col className="w-[25.5%]" />
-                              </colgroup>
-                              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                                <tr>
-                                  {['Item', 'System quantity', 'Physical quantity', 'Control quantity'].map((label) => (
-                                    <th key={label} className="border-b border-slate-200 px-1 py-2 text-[9px] font-semibold leading-tight sm:px-3 sm:text-xs">{label}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {transferDetails.map((detail) => {
-                                  const detailKey = detail.detailKey
-                                  return (
-                                    <tr key={detailKey} className="border-b border-slate-100">
-                                      <td className="break-words px-1 py-3 font-medium text-slate-900 sm:px-3">{detail.Label1 || '—'}</td>
-                                      <td className="break-words px-1 py-3 text-slate-600 sm:px-3">{detail.Quantity ?? '—'}</td>
-                                      <td className="px-1 py-2 sm:px-3">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          step="any"
-                                          value={transferPhysicalQuantities[detailKey] ?? ''}
-                                          onChange={(event) => {
-                                            setTransferSaved(false)
-                                            setTransferPhysicalQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
-                                          }}
-                                          className="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-2 text-xs text-slate-900 outline-none focus:border-emerald-600 sm:px-3 sm:text-sm"
-                                        />
-                                      </td>
-                                      <td className="px-1 py-2 sm:px-3">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          step="any"
-                                          value={transferControlQuantities[detailKey] ?? ''}
-                                          onChange={(event) => {
-                                            setTransferSaved(false)
-                                            setTransferControlQuantities((current) => ({ ...current, [detailKey]: event.target.value }))
-                                          }}
-                                          className="w-full min-w-0 rounded-md border border-slate-300 px-1.5 py-2 text-xs text-slate-900 outline-none focus:border-emerald-600 sm:px-3 sm:text-sm"
-                                        />
-                                      </td>
-                                    </tr>
-                                  )
-                                })}
-                              </tbody>
-                            </table>
-                            <p className="mt-3 text-xs text-slate-500">{transferToView.sourceWarehouse || 'Selected warehouse'} → {transferToView.destinationWarehouse || 'Destination'} · {transferDetails.length} line items</p>
-                            <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
-                              <p aria-live="polite" className="text-sm text-emerald-700">{transferSaved ? 'Quantities saved.' : ''}</p>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    setTransferDetailsError('')
-                                    await handleSaveTransferPhysicalQuantities(
-                                      transferToView,
-                                      transferPhysicalQuantities,
-                                      transferControlQuantities,
-                                      authenticatedEmployeeId,
-                                      authenticatedEmployeeId,
-                                    )
-                                    setTransferSaved(true)
-                                  } catch (error) {
-                                    setTransferDetailsError(error.message || 'Unable to save transfer quantities')
-                                  }
-                                }}
-                                className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
-                              >
-                                Save quantities
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className="py-10 text-center text-sm text-slate-500">No transfer details found for this reference.</p>
-                        )}
-                      </div>
-                    </section>
-                  </div>
+                  <OrderDetailsDialog
+                    key={transferToView.reference || transferToView.id}
+                    order={{
+                      ...transferToView,
+                      orderNumber: transferToView.reference,
+                      warehouseName: transferToView.sourceWarehouse,
+                      wilaya: transferToView.destinationWarehouse,
+                      createdAt: transferToView.transferDate || transferToView.createdAt,
+                    }}
+                    onClose={() => setTransferToView(null)}
+                    onFetchOrderDetails={handleFetchTransferDetails}
+                    onSavePhysicalQuantities={async (doc, physicalQuantities, controlQuantities, employeePrepared, controllerEmployeeId) => {
+                      await handleSaveTransferPhysicalQuantities(
+                        doc,
+                        physicalQuantities,
+                        controlQuantities,
+                        employeePrepared,
+                        controllerEmployeeId,
+                      )
+                    }}
+                    authenticatedEmployeeId={authenticatedEmployeeId}
+                    selectedWarehouse={selectedWarehouse || currentUser?.workingWarehouse || ''}
+                    warehouses={warehouses}
+                    enableDemandTransfer={false}
+                    onPrintTicket={handlePrintTransferTicket}
+                    warehouseFooter={`${transferToView.sourceWarehouse || 'Source'} → ${transferToView.destinationWarehouse || 'Destination'}`}
+                  />
                 )}
               </section>
             ) : activeView === 'inventory' ? (

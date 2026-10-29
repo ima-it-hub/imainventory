@@ -267,6 +267,7 @@ async function getTransferSyncRowsFromOdbc(warehouseFilter = null) {
       "d"."Oid" AS "id",
       "d"."Date" AS "date",
       "d"."Reference" AS "reference",
+      "d"."Reference" AS "Reference",
       "d"."WarehouseSource" AS "warehouseSource",
       "source_wh"."Label1" AS "warehouseSourceName",
       "d"."WarehouseDestination" AS "warehouseDestination",
@@ -276,13 +277,20 @@ async function getTransferSyncRowsFromOdbc(warehouseFilter = null) {
       "dd"."Batch" AS "Batch",
       "dd"."Label1" AS "Label1",
       "dd"."Quantity" AS "Quantity",
-      "dd"."Document" AS "Document"
+      "dd"."Document" AS "Document",
+      "b"."Item" AS "Item",
+      "p"."Coefficient" AS "Colisage",
+      "p"."Label1" AS "PackingLabel",
+      "p"."Code" AS "PackingCode"
     FROM "COM_Document" AS "d"
     LEFT JOIN "COM_DocumentDetail" AS "dd" ON "d"."Oid" = "dd"."Document"
     LEFT JOIN "COM_Warehouse" AS "source_wh" ON "d"."WarehouseSource" = "source_wh"."Oid"
     LEFT JOIN "COM_Warehouse" AS "destination_wh" ON "d"."WarehouseDestination" = "destination_wh"."Oid"
     LEFT JOIN "COM_ThirdParty" AS "t" ON "d"."ThirdParty" = "t"."Oid"
-    WHERE "d"."Type" = 19
+    LEFT JOIN "COM_Batch" AS "b" ON "b"."Oid" = "dd"."Batch"
+    LEFT JOIN "COM_Item" AS "i" ON "i"."Oid" = "b"."Item"
+    LEFT JOIN "COM_Packing" AS "p" ON "p"."Oid" = "i"."DefaultPacking"
+    WHERE "d"."Type" = 67
       AND "d"."DeleteDate" IS NULL
       AND ("d"."DocumentCategory4" != 9 OR "d"."DocumentCategory4" IS NULL)
       ${warehouseCondition.sql || ''}

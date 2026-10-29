@@ -233,6 +233,7 @@ async function getLogisticsOrdersFromOdbc(warehouseFilter = null) {
       "d"."Oid",
       "d"."Date",
       "d"."Reference",
+      "d"."AssociationReference" AS "AssociationReference",
       "t"."Label1",
       "t"."Tel1",
       "t"."Tel2",

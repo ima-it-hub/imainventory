@@ -247,7 +247,7 @@ export default function LogisticsOrders({
                     setCurrentPage(1)
                     setOrderSearch(e.target.value)
                   }}
-                  placeholder="Search by customer, wilaya, or order number"
+                  placeholder="Search by customer, wilaya, code, or assoc. ref"
                   className="block w-full rounded-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm font-normal text-slate-800 outline-none focus:border-emerald-500"
                 />
               </span>
@@ -344,7 +344,7 @@ export default function LogisticsOrders({
             <table className="w-full min-w-[900px] border-collapse text-left text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500">
                 <tr>
-                  {['Q', 'code', 'Client', 'Wilaya', 'Date', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Status', 'Actions'].map((label) => (
+                  {['Q', 'Code', 'Assoc. ref', 'Client', 'Wilaya', 'Date', 'Pending to ready', 'Pending to delivered', 'Prepared by', 'Controlled by', 'Status', 'Actions'].map((label) => (
                     <th key={label} className="border-b border-slate-200 px-4 py-3 font-semibold">{label}</th>
                   ))}
                 </tr>
@@ -376,6 +376,9 @@ export default function LogisticsOrders({
                       </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap font-mono text-xs font-semibold text-slate-900">{order.orderNumber || '—'}</td>
+                    <td className="px-4 py-3 whitespace-nowrap font-mono text-xs font-semibold text-slate-700">
+                      {order.associationReference || order.association_reference || '—'}
+                    </td>
                     <td className="px-4 py-3 font-semibold text-slate-900">{order.customerName}</td>
                     <td className="px-4 py-3 text-slate-600">{order.wilaya}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-slate-600">{formatOrderDateOnly(order.createdAt)}</td>
@@ -427,7 +430,7 @@ export default function LogisticsOrders({
                 ))}
                 {!visibleOrders.length && (
                   <tr>
-                    <td colSpan="11" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
+                    <td colSpan="12" className="px-4 py-10 text-center text-slate-500">No orders found for the selected filters.</td>
                   </tr>
                 )}
               </tbody>

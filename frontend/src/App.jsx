@@ -1503,6 +1503,7 @@ function App() {
       setOrders(filteredOrders.map((order) => ({
         ...order,
         orderNumber: order.orderNumber || order.order_number,
+        associationReference: order.associationReference || order.association_reference || '',
         customerName: order.customerName || order.customer_name,
         customerPhone: order.customerPhone || order.customer_phone || '',
         employeePrepared: order.employeePrepared || order.employee_prepared,
@@ -1975,13 +1976,18 @@ function App() {
       const wilaya = String(order?.wilaya || '').toLowerCase()
       const orderWilaya = String(order?.wilaya || '').trim()
       const orderNumber = String(order?.orderNumber || '').toLowerCase()
+      const associationReference = String(order?.associationReference || order?.association_reference || '').toLowerCase()
       const search = String(orderSearch || '').toLowerCase()
       const selectedSchedule = String(orderDeliveryFilter || '').trim().toLowerCase()
       const selectedWilayas = (orderWilayaFilter || [])
         .map((value) => String(value || '').trim().toLowerCase())
         .filter(Boolean)
 
-      const matchesSearch = !search || customerName.includes(search) || wilaya.includes(search) || orderNumber.includes(search)
+      const matchesSearch = !search
+        || customerName.includes(search)
+        || wilaya.includes(search)
+        || orderNumber.includes(search)
+        || associationReference.includes(search)
       const matchesStatus = orderStatusFilter === 'All' || order.status === orderStatusFilter
       const matchesWilaya = !selectedWilayas.length
         || selectedWilayas.includes(orderWilaya.toLowerCase())

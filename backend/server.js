@@ -1000,6 +1000,7 @@ app.get('/api/logistics/orders', async (req, res) => {
       SELECT
         lo.id,
         lo.order_number AS "orderNumber",
+        lo.association_reference AS "associationReference",
         lo.customer_name AS "customerName",
         lo.customer_phone AS "customerPhone",
         lo.wilaya,
@@ -1886,6 +1887,9 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         .filter(Boolean)
         .filter((value, index, list) => list.indexOf(value) === index)
         .join(' / ');
+      const associationReference = String(
+        row.AssociationReference ?? row.associationReference ?? row.association_reference ?? '',
+      ).trim() || null;
 
       if (!orderNumber || !customerName || !wilaya) continue;
 
@@ -1898,6 +1902,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         wilaya,
         warehouse_name: warehouseName,
         warehouse_id: warehouseId ? Number(warehouseId) : null,
+        association_reference: associationReference,
         created_at: createdAt,
       };
       const existing = ordersByNumber.get(orderNumber);
@@ -1908,6 +1913,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         existing.wilaya = nextOrder.wilaya;
         existing.warehouse_name = nextOrder.warehouse_name;
         existing.warehouse_id = nextOrder.warehouse_id;
+        existing.association_reference = nextOrder.association_reference;
         existing.created_at = nextOrder.created_at;
       } else {
         ordersByNumber.set(orderNumber, nextOrder);
@@ -1919,8 +1925,13 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
 
     const orderBatchSize = 500;
     const orderUpsertSql = `
-      INSERT INTO logistics_orders (order_number, customer_name, customer_phone, wilaya, warehouse_name, warehouse_id, status, employee_prepared, driver_id, created_at)
-      SELECT order_number, customer_name, customer_phone, wilaya, warehouse_name, warehouse_id, 'Pending', NULL, NULL, created_at
+      INSERT INTO logistics_orders (
+        order_number, customer_name, customer_phone, wilaya, warehouse_name, warehouse_id,
+        association_reference, status, employee_prepared, driver_id, created_at
+      )
+      SELECT
+        order_number, customer_name, customer_phone, wilaya, warehouse_name, warehouse_id,
+        association_reference, 'Pending', NULL, NULL, created_at
       FROM jsonb_to_recordset($1::jsonb) AS incoming(
         order_number TEXT,
         customer_name TEXT,
@@ -1928,6 +1939,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
         wilaya TEXT,
         warehouse_name TEXT,
         warehouse_id INTEGER,
+        association_reference TEXT,
         created_at TIMESTAMPTZ
       )
       ON CONFLICT (order_number) DO UPDATE
@@ -1936,12 +1948,14 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
           wilaya = EXCLUDED.wilaya,
           warehouse_name = EXCLUDED.warehouse_name,
           warehouse_id = EXCLUDED.warehouse_id,
+          association_reference = EXCLUDED.association_reference,
           created_at = EXCLUDED.created_at
       WHERE logistics_orders.customer_name IS DISTINCT FROM EXCLUDED.customer_name
          OR logistics_orders.customer_phone IS DISTINCT FROM EXCLUDED.customer_phone
          OR logistics_orders.wilaya IS DISTINCT FROM EXCLUDED.wilaya
          OR logistics_orders.warehouse_name IS DISTINCT FROM EXCLUDED.warehouse_name
          OR logistics_orders.warehouse_id IS DISTINCT FROM EXCLUDED.warehouse_id
+         OR logistics_orders.association_reference IS DISTINCT FROM EXCLUDED.association_reference
          OR logistics_orders.created_at IS DISTINCT FROM EXCLUDED.created_at
       RETURNING id;
     `;

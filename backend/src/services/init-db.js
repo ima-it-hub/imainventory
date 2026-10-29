@@ -142,6 +142,7 @@ async function initializeDatabase() {
       wilaya VARCHAR(255) NOT NULL,
       warehouse_name VARCHAR(255),
       warehouse_id INTEGER,
+      association_reference VARCHAR(255),
       status VARCHAR(50) NOT NULL DEFAULT 'Pending',
       employee_prepared VARCHAR(100),
       driver_id INTEGER REFERENCES drivers(id) ON DELETE SET NULL,
@@ -318,6 +319,7 @@ async function initializeDatabase() {
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS packing_started_at TIMESTAMPTZ;');
   await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS customer_phone VARCHAR(500);');
+  await query('ALTER TABLE logistics_orders ADD COLUMN IF NOT EXISTS association_reference VARCHAR(255);');
   await query(`
     DO $$ BEGIN
       ALTER TABLE logistics_orders

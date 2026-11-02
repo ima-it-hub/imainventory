@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Eye, Printer, Search, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, Eye, Printer, Search, StickyNote, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import OrderDetailsDialog from './OrderDetailsDialog'
 
@@ -62,6 +62,7 @@ export default function LogisticsOrders({
   getStatusClasses,
   onStatusChange,
   onPrintOrderTicket,
+  onSaveOrderNote,
   onFetchOrderDetails,
   onSaveOrderPhysicalQuantities,
   authenticatedEmployeeId,
@@ -71,6 +72,10 @@ export default function LogisticsOrders({
   const [currentTime, setCurrentTime] = useState(new Date())
   const [currentPage, setCurrentPage] = useState(1)
   const [detailsOrder, setDetailsOrder] = useState(null)
+  const [noteOrder, setNoteOrder] = useState(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
+  const [noteError, setNoteError] = useState('')
   const [wilayaMenuOpen, setWilayaMenuOpen] = useState(false)
   const wilayaMenuRef = useRef(null)
   const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ORDER_PAGE_SIZE))
@@ -398,32 +403,40 @@ export default function LogisticsOrders({
                         ))}
                       </select>
                     </td>
-                    <td className="px-4 py-2">
+                    <td className="px-4 py-2" onClick={(event) => event.stopPropagation()}>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            showOrderDetails(order)
+                          onClick={() => {
+                            setNoteOrder(order)
+                            setNoteDraft(String(order.notes || ''))
+                            setNoteError('')
                           }}
+                          className={`relative inline-flex h-9 w-9 items-center justify-center border bg-white/80 hover:bg-amber-50 ${order.notes ? 'border-amber-300 text-amber-700' : 'border-slate-300 text-slate-700 hover:bg-white'}`}
+                          title={order.notes ? 'Edit note' : 'Add note'}
+                          aria-label={`${order.notes ? 'Edit' : 'Add'} note for ${order.customerName}`}
+                        >
+                          <StickyNote className="h-4 w-4" />
+                          {Boolean(order.notes) && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => showOrderDetails(order)}
                           className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
                           title="View order details"
                           aria-label={`View details for ${order.customerName}`}
                         >
                           <Eye className="h-4 w-4" />
                         </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          onPrintOrderTicket(order)
-                        }}
-                        className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
-                        title="Print order QR ticket"
-                        aria-label={`Print QR ticket for ${order.customerName}`}
-                      >
-                        <Printer className="h-4 w-4" />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => onPrintOrderTicket(order)}
+                          className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
+                          title="Print order QR ticket"
+                          aria-label={`Print QR ticket for ${order.customerName}`}
+                        >
+                          <Printer className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -494,6 +507,76 @@ export default function LogisticsOrders({
           </div>
         </div>
       </div>
+      {noteOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => !savingNote && setNoteOrder(null)}>
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-note-dialog-title"
+            className="w-full max-w-md border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="order-note-dialog-title" className="text-base font-bold text-slate-900">Order note</h2>
+                <p className="truncate text-sm text-slate-500">{noteOrder.orderNumber || noteOrder.customerName}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !savingNote && setNoteOrder(null)}
+                aria-label="Close note dialog"
+                className="inline-flex h-8 w-8 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <form
+              onSubmit={async (event) => {
+                event.preventDefault()
+                if (!onSaveOrderNote || !noteOrder) return
+                if (noteDraft.length > 5000) {
+                  setNoteError('Notes must be at most 5,000 characters.')
+                  return
+                }
+                setSavingNote(true)
+                setNoteError('')
+                try {
+                  const saved = await onSaveOrderNote(noteOrder.id, noteDraft)
+                  if (saved) setNoteOrder(null)
+                } catch (error) {
+                  setNoteError(error.message || 'Unable to save order note')
+                } finally {
+                  setSavingNote(false)
+                }
+              }}
+              className="space-y-3"
+            >
+              <label className="block text-sm font-medium text-slate-700">
+                Note
+                <textarea
+                  autoFocus
+                  value={noteDraft}
+                  onChange={(event) => setNoteDraft(event.target.value)}
+                  rows={5}
+                  maxLength={5000}
+                  placeholder="Write a note for this order..."
+                  className="mt-1 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-600"
+                />
+              </label>
+              {noteError && <p className="text-sm text-rose-600">{noteError}</p>}
+              <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                <span>{noteDraft.length}/5000</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => !savingNote && setNoteOrder(null)} className="border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700">Cancel</button>
+                  <button type="submit" disabled={savingNote} className="bg-sky-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
+                    {savingNote ? 'Saving...' : 'Save note'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
       {detailsOrder && (
         <OrderDetailsDialog
           key={detailsOrder.orderNumber || detailsOrder.id}

@@ -280,7 +280,8 @@ app.get('/api/assets', async (_req, res) => {
         place.name AS "placeName",
         asset.purchase_value AS "purchaseValue",
         asset.current_value AS "currentValue",
-        asset.repair_status AS "repairStatus"
+        asset.repair_status AS "repairStatus",
+        COALESCE(asset.notes, '') AS "notes"
       FROM assets AS asset
       INNER JOIN asset_categories AS category ON category.id = asset.category_id
       INNER JOIN asset_places AS place ON place.id = asset.place_id
@@ -411,6 +412,27 @@ app.patch('/api/assets/:id/current-value', async (req, res) => {
   } catch (error) {
     console.error('Asset current value update failed:', error);
     res.status(500).json({ error: 'Unable to update current value', details: error.message });
+  }
+});
+
+app.patch('/api/assets/:id/notes', async (req, res) => {
+  try {
+    const notes = String(req.body?.notes ?? '');
+    if (notes.length > 5000) {
+      return res.status(400).json({ error: 'Notes must be at most 5,000 characters.' });
+    }
+
+    const rows = await query(`
+      UPDATE assets
+      SET notes = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING id, COALESCE(notes, '') AS "notes";
+    `, [notes, Number(req.params.id)]);
+    if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
+    res.json({ asset: rows[0] });
+  } catch (error) {
+    console.error('Asset notes update failed:', error);
+    res.status(500).json({ error: 'Unable to update asset notes', details: error.message });
   }
 });
 
@@ -1034,6 +1056,7 @@ app.get('/api/logistics/orders', async (req, res) => {
         COALESCE(counts.quantities_match, false) AS "quantitiesMatch",
         lo.driver_id AS "driverId",
         d.name AS "driverName",
+        COALESCE(lo.notes, '') AS "notes",
         lo.created_at AS "createdAt"
       FROM logistics_orders lo
       LEFT JOIN drivers d ON d.id = lo.driver_id
@@ -1067,7 +1090,8 @@ app.get('/api/logistics/transfers', async (req, res) => {
         transfer.document_category4 AS "documentCategory4",
         COALESCE(status.status, 'Pending') AS "status",
         COALESCE(prepared_employee.name, counts.employee_prepared_id) AS "preparedBy",
-        COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy"
+        COALESCE(controller_employee.name, counts.controller_employee_id) AS "controlledBy",
+        COALESCE(transfer.notes, '') AS "notes"
       FROM logistics_transfers transfer
       LEFT JOIN logistics_transfer_statuses status ON status.transfer_reference = transfer.transfer_reference
       LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = transfer.transfer_reference
@@ -1216,6 +1240,50 @@ app.put('/api/logistics/transfers/:reference/status', async (req, res) => {
   } catch (error) {
     console.error('Transfer status update failed:', error);
     res.status(500).json({ error: 'Unable to update transfer status', details: error.message });
+  }
+});
+
+app.patch('/api/logistics/orders/:id/notes', async (req, res) => {
+  try {
+    const notes = String(req.body?.notes ?? '');
+    if (notes.length > 5000) {
+      return res.status(400).json({ error: 'Notes must be at most 5,000 characters.' });
+    }
+
+    const rows = await query(`
+      UPDATE logistics_orders
+      SET notes = $1
+      WHERE id = $2
+      RETURNING id, COALESCE(notes, '') AS "notes";
+    `, [notes, Number(req.params.id)]);
+    if (!rows.length) return res.status(404).json({ error: 'Order not found.' });
+    res.json({ order: rows[0] });
+  } catch (error) {
+    console.error('Logistics order notes update failed:', error);
+    res.status(500).json({ error: 'Unable to update order notes', details: error.message });
+  }
+});
+
+app.patch('/api/logistics/transfers/:reference/notes', async (req, res) => {
+  try {
+    const reference = String(req.params.reference || '').trim();
+    const notes = String(req.body?.notes ?? '');
+    if (!reference) return res.status(400).json({ error: 'Transfer reference is required.' });
+    if (notes.length > 5000) {
+      return res.status(400).json({ error: 'Notes must be at most 5,000 characters.' });
+    }
+
+    const rows = await query(`
+      UPDATE logistics_transfers
+      SET notes = $1
+      WHERE transfer_reference = $2
+      RETURNING transfer_reference AS "reference", COALESCE(notes, '') AS "notes";
+    `, [notes, reference]);
+    if (!rows.length) return res.status(404).json({ error: 'Transfer not found.' });
+    res.json({ transfer: rows[0] });
+  } catch (error) {
+    console.error('Transfer notes update failed:', error);
+    res.status(500).json({ error: 'Unable to update transfer notes', details: error.message });
   }
 });
 

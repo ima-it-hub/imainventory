@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Boxes, Check, MapPin, PackagePlus, Pencil, Plus, Printer, Search, Trash2, X } from 'lucide-react'
+import { Boxes, Check, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
 import { useToast } from './ToastProvider'
 
 const currencyFormatter = new Intl.NumberFormat('fr-DZ', {
@@ -47,6 +47,8 @@ export default function AssetManagement({ apiUrl }) {
   const [categories, setCategories] = useState([])
   const [places, setPlaces] = useState([])
   const [search, setSearch] = useState('')
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState([])
+  const [selectedPlaceIds, setSelectedPlaceIds] = useState([])
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState(null)
@@ -55,6 +57,9 @@ export default function AssetManagement({ apiUrl }) {
   const [placeName, setPlaceName] = useState('')
   const [currentValueDrafts, setCurrentValueDrafts] = useState({})
   const [savingCurrentValueId, setSavingCurrentValueId] = useState(null)
+  const [noteAsset, setNoteAsset] = useState(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
   const [form, setForm] = useState({
     name: '',
     categoryId: '',
@@ -164,15 +169,46 @@ export default function AssetManagement({ apiUrl }) {
 
   const filteredAssets = useMemo(() => {
     const term = search.trim().toLocaleLowerCase()
-    if (!term) return assets
-    return assets.filter((asset) => (
-      [asset.name, asset.categoryName, asset.placeName, `AST-${String(asset.id).padStart(6, '0')}`]
+    const categoryIdSet = new Set(selectedCategoryIds.map(Number))
+    const placeIdSet = new Set(selectedPlaceIds.map(Number))
+    return assets.filter((asset) => {
+      if (categoryIdSet.size && !categoryIdSet.has(Number(asset.categoryId))) return false
+      if (placeIdSet.size && !placeIdSet.has(Number(asset.placeId))) return false
+      if (!term) return true
+      return [asset.name, asset.categoryName, asset.placeName, `AST-${String(asset.id).padStart(6, '0')}`]
         .some((value) => String(value || '').toLocaleLowerCase().includes(term))
-    ))
-  }, [assets, search])
+    })
+  }, [assets, search, selectedCategoryIds, selectedPlaceIds])
 
-  const totalValue = assets.reduce((sum, asset) => sum + getAssetValue(asset), 0)
-  const totalCurrentValue = assets.reduce((sum, asset) => sum + getAssetCurrentValue(asset), 0)
+  const totalValue = filteredAssets.reduce((sum, asset) => sum + getAssetValue(asset), 0)
+  const totalCurrentValue = filteredAssets.reduce((sum, asset) => sum + getAssetCurrentValue(asset), 0)
+  const hasRowFilters = selectedCategoryIds.length > 0 || selectedPlaceIds.length > 0
+  const selectedFilterLabel = [
+    selectedCategoryIds.length
+      ? `${selectedCategoryIds.length} categor${selectedCategoryIds.length === 1 ? 'y' : 'ies'}`
+      : null,
+    selectedPlaceIds.length
+      ? `${selectedPlaceIds.length} place${selectedPlaceIds.length === 1 ? '' : 's'}`
+      : null,
+  ].filter(Boolean).join(' · ')
+
+  function toggleCategoryFilter(categoryId) {
+    const numericId = Number(categoryId)
+    setSelectedCategoryIds((current) => (
+      current.some((id) => Number(id) === numericId)
+        ? current.filter((id) => Number(id) !== numericId)
+        : [...current, categoryId]
+    ))
+  }
+
+  function togglePlaceFilter(placeId) {
+    const numericId = Number(placeId)
+    setSelectedPlaceIds((current) => (
+      current.some((id) => Number(id) === numericId)
+        ? current.filter((id) => Number(id) !== numericId)
+        : [...current, placeId]
+    ))
+  }
 
   function summarizeBy(idKey, nameKey, source) {
     const totals = new Map()
@@ -314,6 +350,45 @@ export default function AssetManagement({ apiUrl }) {
     }
   }
 
+  function openNoteDialog(asset) {
+    setNoteAsset(asset)
+    setNoteDraft(String(asset.notes || ''))
+    setError('')
+  }
+
+  function closeNoteDialog() {
+    setNoteAsset(null)
+    setNoteDraft('')
+    setSavingNote(false)
+  }
+
+  async function saveAssetNote(event) {
+    event.preventDefault()
+    if (!noteAsset) return
+    if (noteDraft.length > 5000) {
+      setError('Notes must be at most 5,000 characters.')
+      return
+    }
+
+    setSavingNote(true)
+    setError('')
+    try {
+      const data = await request(`/api/assets/${noteAsset.id}/notes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: noteDraft }),
+      })
+      setAssets((current) => current.map((item) => (
+        item.id === noteAsset.id ? { ...item, notes: data.asset.notes } : item
+      )))
+      closeNoteDialog()
+    } catch (saveError) {
+      setError(saveError.message || 'Unable to save asset note')
+    } finally {
+      setSavingNote(false)
+    }
+  }
+
   async function saveRepairStatus(asset, repairStatus) {
     setError('')
     try {
@@ -371,8 +446,10 @@ export default function AssetManagement({ apiUrl }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="summary-card accent-blue border border-slate-200 bg-white p-4">
           <span className="summary-label">Assets</span>
-          <strong>{assets.length}</strong>
-          <small>Registered asset records</small>
+          <strong>{filteredAssets.length}</strong>
+          <small>
+            {hasRowFilters ? selectedFilterLabel || 'Filtered selection' : 'Registered asset records'}
+          </small>
         </div>
         <div className="summary-card accent-emerald border border-slate-200 bg-white p-4">
           <span className="summary-label">Total purchase value</span>
@@ -405,28 +482,92 @@ export default function AssetManagement({ apiUrl }) {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <section className="border border-slate-200 bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <Boxes className="h-4 w-4 text-sky-700" />
-            <h2 className="text-sm font-bold text-slate-900">Value by category</h2>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Boxes className="h-4 w-4 text-sky-700" />
+              <h2 className="text-sm font-bold text-slate-900">Value by category</h2>
+            </div>
+            {selectedCategoryIds.length > 0 && (
+              <button type="button" onClick={() => setSelectedCategoryIds([])} className="text-xs font-semibold text-sky-700 hover:underline">
+                Clear
+              </button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Category</th><th>Assets</th><th className="text-right">Purchase value</th><th className="text-right">Current value</th></tr></thead>
-              <tbody>{categoryTotals.map((item) => <tr key={item.id} className="border-t border-slate-100"><td className="py-2 font-medium text-slate-800">{item.name}</td><td className="text-slate-600">{item.assetCount}</td><td className="text-right text-slate-700">{formatCurrency(item.value)}</td><td className="text-right text-slate-700">{formatCurrency(item.currentValue)}</td></tr>)}</tbody>
+              <tbody>
+                {categoryTotals.map((item) => {
+                  const isSelected = selectedCategoryIds.some((id) => Number(id) === Number(item.id))
+                  return (
+                    <tr
+                      key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSelected}
+                      onClick={() => toggleCategoryFilter(item.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          toggleCategoryFilter(item.id)
+                        }
+                      }}
+                      className={`cursor-pointer border-t border-slate-100 transition-colors ${isSelected ? 'bg-sky-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <td className={`py-2 font-medium ${isSelected ? 'text-sky-800' : 'text-slate-800'}`}>{item.name}</td>
+                      <td className="text-slate-600">{item.assetCount}</td>
+                      <td className="text-right text-slate-700">{formatCurrency(item.value)}</td>
+                      <td className="text-right text-slate-700">{formatCurrency(item.currentValue)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
             </table>
             {!categoryTotals.length && <p className="py-4 text-sm text-slate-500">No categories yet.</p>}
           </div>
         </section>
 
         <section className="border border-slate-200 bg-white p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <MapPin className="h-4 w-4 text-emerald-700" />
-            <h2 className="text-sm font-bold text-slate-900">Value by place</h2>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-emerald-700" />
+              <h2 className="text-sm font-bold text-slate-900">Value by place</h2>
+            </div>
+            {selectedPlaceIds.length > 0 && (
+              <button type="button" onClick={() => setSelectedPlaceIds([])} className="text-xs font-semibold text-emerald-700 hover:underline">
+                Clear
+              </button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Place</th><th>Assets</th><th className="text-right">Purchase value</th><th className="text-right">Current value</th></tr></thead>
-              <tbody>{placeTotals.map((item) => <tr key={item.id} className="border-t border-slate-100"><td className="py-2 font-medium text-slate-800">{item.name}</td><td className="text-slate-600">{item.assetCount}</td><td className="text-right text-slate-700">{formatCurrency(item.value)}</td><td className="text-right text-slate-700">{formatCurrency(item.currentValue)}</td></tr>)}</tbody>
+              <tbody>
+                {placeTotals.map((item) => {
+                  const isSelected = selectedPlaceIds.some((id) => Number(id) === Number(item.id))
+                  return (
+                    <tr
+                      key={item.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-pressed={isSelected}
+                      onClick={() => togglePlaceFilter(item.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          togglePlaceFilter(item.id)
+                        }
+                      }}
+                      className={`cursor-pointer border-t border-slate-100 transition-colors ${isSelected ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <td className={`py-2 font-medium ${isSelected ? 'text-emerald-800' : 'text-slate-800'}`}>{item.name}</td>
+                      <td className="text-slate-600">{item.assetCount}</td>
+                      <td className="text-right text-slate-700">{formatCurrency(item.value)}</td>
+                      <td className="text-right text-slate-700">{formatCurrency(item.currentValue)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
             </table>
             {!placeTotals.length && <p className="py-4 text-sm text-slate-500">No places yet.</p>}
           </div>
@@ -500,14 +641,89 @@ export default function AssetManagement({ apiUrl }) {
                       <option value="Sent to maintenance">Sent to maintenance</option>
                     </select>
                   </td>
-                  <td className="px-3 py-3"><div className="flex gap-2"><button type="button" onClick={() => startEdit(asset)} aria-label={`Edit ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button><button type="button" onClick={() => deleteAsset(asset)} aria-label={`Delete ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-rose-200 text-rose-700 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button></div></td>
+                  <td className="px-3 py-3">
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openNoteDialog(asset)}
+                        title={asset.notes ? 'Edit note' : 'Add note'}
+                        aria-label={`${asset.notes ? 'Edit' : 'Add'} note for ${asset.name}`}
+                        className={`relative inline-flex h-9 w-9 items-center justify-center border hover:bg-amber-50 ${asset.notes ? 'border-amber-300 text-amber-700' : 'border-slate-200 text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        <StickyNote className="h-4 w-4" />
+                        {Boolean(asset.notes) && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                      </button>
+                      <button type="button" onClick={() => startEdit(asset)} aria-label={`Edit ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-700 hover:bg-slate-100"><Pencil className="h-4 w-4" /></button>
+                      <button type="button" onClick={() => deleteAsset(asset)} aria-label={`Delete ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-rose-200 text-rose-700 hover:bg-rose-50"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                  </td>
                 </tr>
               ))}
-              {!filteredAssets.length && <tr><td colSpan="11" className="px-3 py-10 text-center text-slate-500">{assets.length ? 'No assets match your search.' : 'No assets have been added yet.'}</td></tr>}
+              {!filteredAssets.length && (
+                <tr>
+                  <td colSpan="11" className="px-3 py-10 text-center text-slate-500">
+                    {assets.length
+                      ? (hasRowFilters || search.trim()
+                        ? 'No assets match the current filters.'
+                        : 'No assets match your search.')
+                      : 'No assets have been added yet.'}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </section>
+
+      {noteAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={closeNoteDialog}>
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="asset-note-dialog-title"
+            className="w-full max-w-md border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="asset-note-dialog-title" className="text-base font-bold text-slate-900">Asset note</h2>
+                <p className="truncate text-sm text-slate-500">{noteAsset.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closeNoteDialog}
+                aria-label="Close note dialog"
+                className="inline-flex h-8 w-8 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+            <form onSubmit={saveAssetNote} className="space-y-3">
+              <label className="block text-sm font-medium text-slate-700">
+                Note
+                <textarea
+                  autoFocus
+                  value={noteDraft}
+                  onChange={(event) => setNoteDraft(event.target.value)}
+                  rows={5}
+                  maxLength={5000}
+                  placeholder="Write a note for this asset..."
+                  className="mt-1 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-600"
+                />
+              </label>
+              <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                <span>{noteDraft.length}/5000</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={closeNoteDialog} className="border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700">Cancel</button>
+                  <button type="submit" disabled={savingNote} className="bg-sky-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
+                    {savingNote ? 'Saving...' : 'Save note'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
 
       {activeDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => activeDialog === 'asset' ? resetForm() : setActiveDialog(null)}>

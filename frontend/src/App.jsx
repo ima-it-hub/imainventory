@@ -18,6 +18,7 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  StickyNote,
   Truck,
   UserRound,
   Warehouse,
@@ -153,6 +154,9 @@ function App() {
   const [orders, setOrders] = useState([])
   const [transfers, setTransfers] = useState([])
   const [transferToView, setTransferToView] = useState(null)
+  const [noteTransfer, setNoteTransfer] = useState(null)
+  const [transferNoteDraft, setTransferNoteDraft] = useState('')
+  const [savingTransferNote, setSavingTransferNote] = useState(false)
   const [drivers, setDrivers] = useState([])
   const [deliverySchedule, setDeliverySchedule] = useState([])
   const [scheduleForm, setScheduleForm] = useState({
@@ -555,6 +559,36 @@ function App() {
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  async function handleSaveOrderNote(orderId, notes) {
+    const response = await fetch(`${API_URL}/api/logistics/orders/${orderId}/notes`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Unable to save order note')
+
+    setOrders((current) => current.map((order) => (
+      order.id === orderId ? { ...order, notes: data.order.notes } : order
+    )))
+    return true
+  }
+
+  async function handleSaveTransferNote(transferReference, notes) {
+    const response = await fetch(`${API_URL}/api/logistics/transfers/${encodeURIComponent(transferReference)}/notes`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'Unable to save transfer note')
+
+    setTransfers((current) => current.map((transfer) => (
+      transfer.reference === transferReference ? { ...transfer, notes: data.transfer.notes } : transfer
+    )))
+    return true
   }
 
   async function handleFetchTransferDetails(transfer) {
@@ -2493,6 +2527,19 @@ function App() {
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
+                                onClick={() => {
+                                  setNoteTransfer(transfer)
+                                  setTransferNoteDraft(String(transfer.notes || ''))
+                                }}
+                                className={`relative inline-flex h-9 w-9 items-center justify-center border bg-white/80 hover:bg-amber-50 ${transfer.notes ? 'border-amber-300 text-amber-700' : 'border-slate-300 text-slate-700 hover:bg-white'}`}
+                                title={transfer.notes ? 'Edit note' : 'Add note'}
+                                aria-label={`${transfer.notes ? 'Edit' : 'Add'} note for transfer ${transfer.reference}`}
+                              >
+                                <StickyNote className="h-4 w-4" />
+                                {Boolean(transfer.notes) && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-amber-500" />}
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => setTransferToView(transfer)}
                                 className="inline-flex h-9 w-9 items-center justify-center border border-slate-300 bg-white/80 text-slate-700 hover:bg-white"
                                 title="View transfer details"
@@ -2548,6 +2595,75 @@ function App() {
                     </button>
                   </div>
                 </div>
+
+                {noteTransfer && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={() => !savingTransferNote && setNoteTransfer(null)}>
+                    <section
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="transfer-note-dialog-title"
+                      className="w-full max-w-md border border-slate-200 bg-white p-4 shadow-2xl"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      <header className="mb-3 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h2 id="transfer-note-dialog-title" className="text-base font-bold text-slate-900">Transfer note</h2>
+                          <p className="truncate text-sm text-slate-500">{noteTransfer.reference}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => !savingTransferNote && setNoteTransfer(null)}
+                          aria-label="Close note dialog"
+                          className="inline-flex h-8 w-8 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-50"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </header>
+                      <form
+                        onSubmit={async (event) => {
+                          event.preventDefault()
+                          if (!noteTransfer?.reference) return
+                          if (transferNoteDraft.length > 5000) {
+                            setError('Notes must be at most 5,000 characters.')
+                            return
+                          }
+                          setSavingTransferNote(true)
+                          try {
+                            await handleSaveTransferNote(noteTransfer.reference, transferNoteDraft)
+                            setNoteTransfer(null)
+                          } catch (err) {
+                            setError(err.message || 'Unable to save transfer note')
+                          } finally {
+                            setSavingTransferNote(false)
+                          }
+                        }}
+                        className="space-y-3"
+                      >
+                        <label className="block text-sm font-medium text-slate-700">
+                          Note
+                          <textarea
+                            autoFocus
+                            value={transferNoteDraft}
+                            onChange={(event) => setTransferNoteDraft(event.target.value)}
+                            rows={5}
+                            maxLength={5000}
+                            placeholder="Write a note for this transfer..."
+                            className="mt-1 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-600"
+                          />
+                        </label>
+                        <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                          <span>{transferNoteDraft.length}/5000</span>
+                          <div className="flex gap-2">
+                            <button type="button" onClick={() => !savingTransferNote && setNoteTransfer(null)} className="border border-slate-300 px-3 py-1.5 text-sm font-semibold text-slate-700">Cancel</button>
+                            <button type="submit" disabled={savingTransferNote} className="bg-sky-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50">
+                              {savingTransferNote ? 'Saving...' : 'Save note'}
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+                    </section>
+                  </div>
+                )}
 
                 {transferToView && (
                   <OrderDetailsDialog
@@ -2870,6 +2986,7 @@ function App() {
                 getStatusClasses={getStatusClasses}
                 onStatusChange={handleOrderStatusChange}
                 onPrintOrderTicket={handlePrintOrderTicket}
+                onSaveOrderNote={handleSaveOrderNote}
                 onFetchOrderDetails={handleFetchOrderDetails}
                 onSaveOrderPhysicalQuantities={handleSaveOrderPhysicalQuantities}
                 authenticatedEmployeeId={authenticatedEmployeeId}

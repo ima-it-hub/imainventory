@@ -378,6 +378,18 @@ async function initializeDatabase() {
     EXCEPTION WHEN duplicate_object THEN NULL;
     END $$;
   `);
+  await query(`
+    ALTER TABLE assets
+    ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+  `);
+  await query(`
+    ALTER TABLE logistics_orders
+    ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+  `);
+  await query(`
+    ALTER TABLE logistics_transfers
+    ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
+  `);
   await query('CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);');
   await query('CREATE INDEX IF NOT EXISTS idx_assets_place_id ON assets(place_id);');
   await query(`

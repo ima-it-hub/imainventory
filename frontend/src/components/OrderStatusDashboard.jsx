@@ -245,6 +245,7 @@ export default function OrderStatusDashboard({
                 {columnOrders.map((order) => {
                   const elapsed = packingDisplaySeconds(order)
                   const orderCode = order.orderNumber || order.order_number || ''
+                  const associationReference = order.associationReference || order.association_reference || ''
                   const timerClasses = order.status === 'Ready'
                     ? 'border-indigo-300 bg-white/90 text-indigo-800'
                     : 'border-orange-300 bg-white/90 text-orange-800'
@@ -271,7 +272,7 @@ export default function OrderStatusDashboard({
                       }}
                       tabIndex={0}
                       onClick={() => setDetailsOrder(order)}
-                      aria-label={`${orderCode || 'Commande'}, ${order.customerName || 'Client'}, ${order.wilaya || 'Wilaya inconnue'}, statut ${column.label}. Utilisez les flèches gauche et droite pour changer le statut.`}
+                      aria-label={`${orderCode || 'Commande'}${associationReference ? `, ref ${associationReference}` : ''}, ${order.customerName || 'Client'}, ${order.wilaya || 'Wilaya inconnue'}, statut ${column.label}. Utilisez les flèches gauche et droite pour changer le statut.`}
                       className={`relative cursor-grab border p-3 pr-16 shadow-sm transition hover:shadow ${column.card} ${draggedOrderId === order.id ? 'opacity-40' : ''} ${movingOrderId === order.id ? 'cursor-wait opacity-60' : ''}`}
                     >
                       {elapsed !== null ? (
@@ -279,8 +280,11 @@ export default function OrderStatusDashboard({
                           {formatElapsed(elapsed)}
                         </p>
                       ) : null}
-                      <p className="font-mono text-xs font-bold uppercase tracking-wide text-slate-700">
-                        {orderCode || '—'}
+                      <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-xs font-bold uppercase tracking-wide text-slate-700">
+                        <span>{orderCode || '—'}</span>
+                        {associationReference ? (
+                          <span className="font-semibold normal-case tracking-normal text-slate-500">{associationReference}</span>
+                        ) : null}
                       </p>
                       <p className="mt-1 text-sm font-bold text-slate-900">{order.customerName || 'Client inconnu'}</p>
                       <p className="mt-1 text-xs text-slate-600">{order.wilaya || 'Wilaya inconnue'}</p>

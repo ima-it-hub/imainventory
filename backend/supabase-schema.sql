@@ -84,12 +84,21 @@ CREATE TABLE IF NOT EXISTS asset_places (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS asset_subplaces (
+  id SERIAL PRIMARY KEY,
+  place_id INTEGER NOT NULL REFERENCES asset_places(id) ON DELETE CASCADE,
+  name VARCHAR(150) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (place_id, name)
+);
+
 CREATE TABLE IF NOT EXISTS assets (
   id SERIAL PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON DELETE RESTRICT,
   quantity NUMERIC(12,2) NOT NULL DEFAULT 1 CHECK (quantity >= 0),
   place_id INTEGER NOT NULL REFERENCES asset_places(id) ON DELETE RESTRICT,
+  subplace_id INTEGER REFERENCES asset_subplaces(id) ON DELETE RESTRICT,
   purchase_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_value >= 0),
   current_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (current_value >= 0),
   repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable' CHECK (repair_status IN ('Réparable', 'Irréparable')),
@@ -117,3 +126,5 @@ CREATE INDEX IF NOT EXISTS idx_audit_history_item_id ON audit_history(item_id);
 CREATE INDEX IF NOT EXISTS idx_physical_counts_item_id ON physical_counts(item_id);
 CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);
 CREATE INDEX IF NOT EXISTS idx_assets_place_id ON assets(place_id);
+CREATE INDEX IF NOT EXISTS idx_assets_subplace_id ON assets(subplace_id);
+CREATE INDEX IF NOT EXISTS idx_asset_subplaces_place_id ON asset_subplaces(place_id);

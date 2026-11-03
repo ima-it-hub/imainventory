@@ -226,16 +226,63 @@ app.delete('/api/asset-categories/:id', async (req, res) => {
   }
 });
 
+async function resolveAssetSubplaceId(placeId, subplaceId) {
+  if (subplaceId === undefined || subplaceId === null || subplaceId === '') return null;
+  const numericSubplaceId = Number(subplaceId);
+  if (!Number.isInteger(numericSubplaceId) || numericSubplaceId <= 0) {
+    throw Object.assign(new Error('Select a valid subplace.'), { status: 400 });
+  }
+
+  const rows = await query(
+    'SELECT id FROM asset_subplaces WHERE id = $1 AND place_id = $2;',
+    [numericSubplaceId, placeId],
+  );
+  if (!rows.length) {
+    throw Object.assign(new Error('That subplace does not belong to the selected place.'), { status: 400 });
+  }
+  return numericSubplaceId;
+}
+
 app.get('/api/asset-places', async (_req, res) => {
   try {
-    const places = await query(`
-      SELECT p.id, p.name, COUNT(a.id)::integer AS "assetCount"
-      FROM asset_places p
-      LEFT JOIN assets a ON a.place_id = p.id
-      GROUP BY p.id
-      ORDER BY p.name ASC;
-    `);
-    res.json({ places, count: places.length });
+    const [places, subplaces] = await Promise.all([
+      query(`
+        SELECT p.id, p.name, COUNT(a.id)::integer AS "assetCount"
+        FROM asset_places p
+        LEFT JOIN assets a ON a.place_id = p.id
+        GROUP BY p.id
+        ORDER BY p.name ASC;
+      `),
+      query(`
+        SELECT
+          sp.id,
+          sp.place_id AS "placeId",
+          sp.name,
+          COUNT(a.id)::integer AS "assetCount"
+        FROM asset_subplaces sp
+        LEFT JOIN assets a ON a.subplace_id = sp.id
+        GROUP BY sp.id
+        ORDER BY sp.name ASC;
+      `),
+    ]);
+
+    const subplacesByPlace = new Map();
+    for (const subplace of subplaces) {
+      const list = subplacesByPlace.get(subplace.placeId) || [];
+      list.push({
+        id: subplace.id,
+        name: subplace.name,
+        assetCount: subplace.assetCount,
+      });
+      subplacesByPlace.set(subplace.placeId, list);
+    }
+
+    const placesWithSubplaces = places.map((place) => ({
+      ...place,
+      subplaces: subplacesByPlace.get(place.id) || [],
+    }));
+
+    res.json({ places: placesWithSubplaces, count: placesWithSubplaces.length });
   } catch (error) {
     console.error('Asset places fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch asset places', details: error.message });
@@ -247,11 +294,50 @@ app.post('/api/asset-places', async (req, res) => {
     const name = String(req.body?.name || '').trim();
     if (!name) return res.status(400).json({ error: 'Place name is required.' });
     const rows = await query('INSERT INTO asset_places (name) VALUES ($1) RETURNING id, name;', [name]);
-    res.status(201).json({ place: rows[0] });
+    res.status(201).json({ place: { ...rows[0], subplaces: [] } });
   } catch (error) {
     if (error.code === '23505') return res.status(409).json({ error: 'That place already exists.' });
     console.error('Asset place creation failed:', error);
     res.status(500).json({ error: 'Unable to create asset place', details: error.message });
+  }
+});
+
+app.post('/api/asset-places/:id/subplaces', async (req, res) => {
+  try {
+    const placeId = Number(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    if (!Number.isInteger(placeId) || placeId <= 0) {
+      return res.status(400).json({ error: 'Place id is required.' });
+    }
+    if (!name) return res.status(400).json({ error: 'Subplace name is required.' });
+
+    const placeRows = await query('SELECT id FROM asset_places WHERE id = $1;', [placeId]);
+    if (!placeRows.length) return res.status(404).json({ error: 'Place not found.' });
+
+    const rows = await query(`
+      INSERT INTO asset_subplaces (place_id, name)
+      VALUES ($1, $2)
+      RETURNING id, place_id AS "placeId", name;
+    `, [placeId, name]);
+    res.status(201).json({ subplace: { ...rows[0], assetCount: 0 } });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'That subplace already exists for this place.' });
+    console.error('Asset subplace creation failed:', error);
+    res.status(500).json({ error: 'Unable to create asset subplace', details: error.message });
+  }
+});
+
+app.delete('/api/asset-subplaces/:id', async (req, res) => {
+  try {
+    const rows = await query('DELETE FROM asset_subplaces WHERE id = $1 RETURNING id;', [Number(req.params.id)]);
+    if (!rows.length) return res.status(404).json({ error: 'Subplace not found.' });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error.code === '23503') {
+      return res.status(409).json({ error: 'Move or delete assets in this subplace before deleting it.' });
+    }
+    console.error('Asset subplace deletion failed:', error);
+    res.status(500).json({ error: 'Unable to delete asset subplace', details: error.message });
   }
 });
 
@@ -278,6 +364,8 @@ app.get('/api/assets', async (_req, res) => {
         asset.quantity,
         asset.place_id AS "placeId",
         place.name AS "placeName",
+        asset.subplace_id AS "subplaceId",
+        subplace.name AS "subplaceName",
         asset.purchase_value AS "purchaseValue",
         asset.current_value AS "currentValue",
         asset.repair_status AS "repairStatus",
@@ -285,6 +373,7 @@ app.get('/api/assets', async (_req, res) => {
       FROM assets AS asset
       INNER JOIN asset_categories AS category ON category.id = asset.category_id
       INNER JOIN asset_places AS place ON place.id = asset.place_id
+      LEFT JOIN asset_subplaces AS subplace ON subplace.id = asset.subplace_id
       ORDER BY asset.name ASC, asset.id ASC;
     `);
     res.json({ assets, count: assets.length });
@@ -296,7 +385,7 @@ app.get('/api/assets', async (_req, res) => {
 
 app.post('/api/assets', async (req, res) => {
   try {
-    const { name, categoryId, quantity, placeId, purchaseValue, currentValue, repairStatus } = req.body || {};
+    const { name, categoryId, quantity, placeId, subplaceId, purchaseValue, currentValue, repairStatus } = req.body || {};
     const cleanName = String(name || '').trim();
     const numericQuantity = Number(quantity);
     const numericPurchaseValue = Number(purchaseValue);
@@ -317,14 +406,17 @@ app.post('/api/assets', async (req, res) => {
       return res.status(400).json({ error: 'Enter a name, category, place, and valid non-negative quantity and values.' });
     }
 
+    const numericSubplaceId = await resolveAssetSubplaceId(numericPlaceId, subplaceId);
+
     const rows = await query(`
-      INSERT INTO assets (name, category_id, quantity, place_id, purchase_value, current_value, repair_status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus";
-    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus]);
+      INSERT INTO assets (name, category_id, quantity, place_id, subplace_id, purchase_value, current_value, repair_status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", subplace_id AS "subplaceId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus";
+    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericSubplaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus]);
     res.status(201).json({ asset: rows[0] });
   } catch (error) {
-    if (error.code === '23503') return res.status(400).json({ error: 'Select an existing category and place.' });
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    if (error.code === '23503') return res.status(400).json({ error: 'Select an existing category, place, and subplace.' });
     console.error('Asset creation failed:', error);
     res.status(500).json({ error: 'Unable to create asset', details: error.message });
   }
@@ -332,7 +424,7 @@ app.post('/api/assets', async (req, res) => {
 
 app.put('/api/assets/:id', async (req, res) => {
   try {
-    const { name, categoryId, quantity, placeId, purchaseValue, currentValue, repairStatus } = req.body || {};
+    const { name, categoryId, quantity, placeId, subplaceId, purchaseValue, currentValue, repairStatus } = req.body || {};
     const cleanName = String(name || '').trim();
     const numericQuantity = Number(quantity);
     const numericPurchaseValue = Number(purchaseValue);
@@ -353,17 +445,20 @@ app.put('/api/assets/:id', async (req, res) => {
       return res.status(400).json({ error: 'Enter a name, category, place, and valid non-negative quantity and values.' });
     }
 
+    const numericSubplaceId = await resolveAssetSubplaceId(numericPlaceId, subplaceId);
+
     const rows = await query(`
       UPDATE assets
-      SET name = $1, category_id = $2, quantity = $3, place_id = $4,
-          purchase_value = $5, current_value = $6, repair_status = $7, updated_at = NOW()
-      WHERE id = $8
-      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus";
-    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus, Number(req.params.id)]);
+      SET name = $1, category_id = $2, quantity = $3, place_id = $4, subplace_id = $5,
+          purchase_value = $6, current_value = $7, repair_status = $8, updated_at = NOW()
+      WHERE id = $9
+      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", subplace_id AS "subplaceId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus";
+    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericSubplaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus, Number(req.params.id)]);
     if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
     res.json({ asset: rows[0] });
   } catch (error) {
-    if (error.code === '23503') return res.status(400).json({ error: 'Select an existing category and place.' });
+    if (error.status) return res.status(error.status).json({ error: error.message });
+    if (error.code === '23503') return res.status(400).json({ error: 'Select an existing category, place, and subplace.' });
     console.error('Asset update failed:', error);
     res.status(500).json({ error: 'Unable to update asset', details: error.message });
   }

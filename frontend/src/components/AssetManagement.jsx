@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Boxes, Check, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Boxes, Check, ChevronDown, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
 import { useToast } from './ToastProvider'
 
 const currencyFormatter = new Intl.NumberFormat('fr-DZ', {
@@ -75,12 +75,15 @@ export default function AssetManagement({ apiUrl }) {
   const [search, setSearch] = useState('')
   const [selectedCategoryIds, setSelectedCategoryIds] = useState([])
   const [selectedPlaceIds, setSelectedPlaceIds] = useState([])
+  const [selectedSubplaceIds, setSelectedSubplaceIds] = useState([])
+  const [expandedPlaceIds, setExpandedPlaceIds] = useState([])
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [editingId, setEditingId] = useState(null)
   const [activeDialog, setActiveDialog] = useState(null)
   const [categoryName, setCategoryName] = useState('')
   const [placeName, setPlaceName] = useState('')
+  const [subplaceDrafts, setSubplaceDrafts] = useState({})
   const [currentValueDrafts, setCurrentValueDrafts] = useState({})
   const [savingCurrentValueId, setSavingCurrentValueId] = useState(null)
   const [noteAsset, setNoteAsset] = useState(null)
@@ -91,6 +94,7 @@ export default function AssetManagement({ apiUrl }) {
     categoryId: '',
     quantity: '1',
     placeId: '',
+    subplaceId: '',
     purchaseValue: '',
     depreciationPercentage: '0',
     repairStatus: 'En service',
@@ -197,24 +201,37 @@ export default function AssetManagement({ apiUrl }) {
     const term = search.trim().toLocaleLowerCase()
     const categoryIdSet = new Set(selectedCategoryIds.map(Number))
     const placeIdSet = new Set(selectedPlaceIds.map(Number))
+    const subplaceIdSet = new Set(selectedSubplaceIds.map(Number))
     return assets.filter((asset) => {
       if (categoryIdSet.size && !categoryIdSet.has(Number(asset.categoryId))) return false
-      if (placeIdSet.size && !placeIdSet.has(Number(asset.placeId))) return false
+      if (placeIdSet.size || subplaceIdSet.size) {
+        const matchesPlace = placeIdSet.has(Number(asset.placeId))
+        const matchesSubplace = asset.subplaceId != null && subplaceIdSet.has(Number(asset.subplaceId))
+        if (!matchesPlace && !matchesSubplace) return false
+      }
       if (!term) return true
-      return [asset.name, asset.categoryName, asset.placeName, `AST-${String(asset.id).padStart(6, '0')}`]
+      return [asset.name, asset.categoryName, asset.placeName, asset.subplaceName, `AST-${String(asset.id).padStart(6, '0')}`]
         .some((value) => String(value || '').toLocaleLowerCase().includes(term))
     })
-  }, [assets, search, selectedCategoryIds, selectedPlaceIds])
+  }, [assets, search, selectedCategoryIds, selectedPlaceIds, selectedSubplaceIds])
+
+  const selectedPlaceSubplaces = useMemo(() => {
+    const place = places.find((item) => Number(item.id) === Number(form.placeId))
+    return place?.subplaces || []
+  }, [places, form.placeId])
 
   const totalValue = filteredAssets.reduce((sum, asset) => sum + getAssetValue(asset), 0)
   const totalCurrentValue = filteredAssets.reduce((sum, asset) => sum + getAssetCurrentValue(asset), 0)
-  const hasRowFilters = selectedCategoryIds.length > 0 || selectedPlaceIds.length > 0
+  const hasRowFilters = selectedCategoryIds.length > 0 || selectedPlaceIds.length > 0 || selectedSubplaceIds.length > 0
   const selectedFilterLabel = [
     selectedCategoryIds.length
       ? `${selectedCategoryIds.length} categor${selectedCategoryIds.length === 1 ? 'y' : 'ies'}`
       : null,
     selectedPlaceIds.length
       ? `${selectedPlaceIds.length} place${selectedPlaceIds.length === 1 ? '' : 's'}`
+      : null,
+    selectedSubplaceIds.length
+      ? `${selectedSubplaceIds.length} subplace${selectedSubplaceIds.length === 1 ? '' : 's'}`
       : null,
   ].filter(Boolean).join(' · ')
 
@@ -229,17 +246,58 @@ export default function AssetManagement({ apiUrl }) {
 
   function togglePlaceFilter(placeId) {
     const numericId = Number(placeId)
+    const place = places.find((item) => Number(item.id) === numericId)
+    const subplaceIds = (place?.subplaces || []).map((subplace) => Number(subplace.id))
+
     setSelectedPlaceIds((current) => (
       current.some((id) => Number(id) === numericId)
         ? current.filter((id) => Number(id) !== numericId)
         : [...current, placeId]
     ))
+    if (subplaceIds.length) {
+      setSelectedSubplaceIds((current) => current.filter((id) => !subplaceIds.includes(Number(id))))
+    }
+  }
+
+  function toggleSubplaceFilter(placeId, subplaceId) {
+    const numericPlaceId = Number(placeId)
+    const numericSubplaceId = Number(subplaceId)
+    setSelectedPlaceIds((current) => current.filter((id) => Number(id) !== numericPlaceId))
+    setSelectedSubplaceIds((current) => (
+      current.some((id) => Number(id) === numericSubplaceId)
+        ? current.filter((id) => Number(id) !== numericSubplaceId)
+        : [...current, subplaceId]
+    ))
+  }
+
+  function handlePlaceRowClick(placeId) {
+    const numericId = Number(placeId)
+    const place = places.find((item) => Number(item.id) === numericId)
+    const hasSubplaces = (place?.subplaces || []).length > 0
+
+    if (hasSubplaces) {
+      setExpandedPlaceIds((current) => (
+        current.some((id) => Number(id) === numericId)
+          ? current.filter((id) => Number(id) !== numericId)
+          : [...current, placeId]
+      ))
+      return
+    }
+
+    togglePlaceFilter(placeId)
+  }
+
+  function clearPlaceFilters() {
+    setSelectedPlaceIds([])
+    setSelectedSubplaceIds([])
+    setExpandedPlaceIds([])
   }
 
   function summarizeBy(idKey, nameKey, source) {
     const totals = new Map()
     for (const asset of assets) {
       const id = asset[idKey]
+      if (id == null) continue
       const current = totals.get(id) || {
         id,
         name: asset[nameKey],
@@ -265,10 +323,17 @@ export default function AssetManagement({ apiUrl }) {
   }
 
   const categoryTotals = summarizeBy('categoryId', 'categoryName', categories)
-  const placeTotals = summarizeBy('placeId', 'placeName', places)
+  const placeTotals = useMemo(() => {
+    const totals = summarizeBy('placeId', 'placeName', places)
+    return totals.map((placeTotal) => {
+      const place = places.find((item) => Number(item.id) === Number(placeTotal.id))
+      const subplaces = summarizeBy('subplaceId', 'subplaceName', place?.subplaces || [])
+      return { ...placeTotal, subplaces }
+    })
+  }, [assets, places])
 
   function resetForm() {
-    setForm({ name: '', categoryId: '', quantity: '1', placeId: '', purchaseValue: '', depreciationPercentage: '0', repairStatus: 'En service' })
+    setForm({ name: '', categoryId: '', quantity: '1', placeId: '', subplaceId: '', purchaseValue: '', depreciationPercentage: '0', repairStatus: 'En service' })
     setEditingId(null)
     setActiveDialog(null)
   }
@@ -280,6 +345,7 @@ export default function AssetManagement({ apiUrl }) {
       categoryId: String(asset.categoryId),
       quantity: String(asset.quantity),
       placeId: String(asset.placeId),
+      subplaceId: asset.subplaceId ? String(asset.subplaceId) : '',
       purchaseValue: String(asset.purchaseValue),
       depreciationPercentage: getDepreciationPercentage(asset.purchaseValue, asset.currentValue ?? asset.purchaseValue),
       repairStatus: asset.repairStatus || 'En service',
@@ -301,6 +367,7 @@ export default function AssetManagement({ apiUrl }) {
       ...assetFields,
       categoryId: Number(form.categoryId),
       placeId: Number(form.placeId),
+      subplaceId: form.subplaceId ? Number(form.subplaceId) : null,
       quantity: Number(form.quantity),
       purchaseValue: Number(form.purchaseValue),
       currentValue: calculateCurrentValue(form.purchaseValue, depreciationPercentage),
@@ -456,6 +523,24 @@ export default function AssetManagement({ apiUrl }) {
     }
   }
 
+  async function addSubplace(place, event) {
+    event.preventDefault()
+    const value = String(subplaceDrafts[place.id] || '').trim()
+    if (!value) return
+    setError('')
+    try {
+      await request(`/api/asset-places/${place.id}/subplaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: value }),
+      })
+      setSubplaceDrafts((current) => ({ ...current, [place.id]: '' }))
+      await loadData()
+    } catch (addError) {
+      setError(addError.message || 'Unable to add subplace')
+    }
+  }
+
   async function deleteLookup(kind, item) {
     const isCategory = kind === 'category'
     setError('')
@@ -464,6 +549,16 @@ export default function AssetManagement({ apiUrl }) {
       await loadData()
     } catch (deleteError) {
       setError(deleteError.message || `Unable to delete ${kind}`)
+    }
+  }
+
+  async function deleteSubplace(subplace) {
+    setError('')
+    try {
+      await request(`/api/asset-subplaces/${subplace.id}`, { method: 'DELETE' })
+      await loadData()
+    } catch (deleteError) {
+      setError(deleteError.message || 'Unable to delete subplace')
     }
   }
 
@@ -501,7 +596,7 @@ export default function AssetManagement({ apiUrl }) {
         <button type="button" onClick={() => { setCategoryName(''); setError(''); setActiveDialog('categories') }} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
           <Plus className="h-4 w-4" />Manage categories
         </button>
-        <button type="button" onClick={() => { setPlaceName(''); setError(''); setActiveDialog('places') }} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+        <button type="button" onClick={() => { setPlaceName(''); setSubplaceDrafts({}); setError(''); setActiveDialog('places') }} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
           <Plus className="h-4 w-4" />Manage places
         </button>
       </div>
@@ -559,8 +654,8 @@ export default function AssetManagement({ apiUrl }) {
               <MapPin className="h-4 w-4 text-emerald-700" />
               <h2 className="text-sm font-bold text-slate-900">Value by place</h2>
             </div>
-            {selectedPlaceIds.length > 0 && (
-              <button type="button" onClick={() => setSelectedPlaceIds([])} className="text-xs font-semibold text-emerald-700 hover:underline">
+            {(selectedPlaceIds.length > 0 || selectedSubplaceIds.length > 0) && (
+              <button type="button" onClick={clearPlaceFilters} className="text-xs font-semibold text-emerald-700 hover:underline">
                 Clear
               </button>
             )}
@@ -570,27 +665,96 @@ export default function AssetManagement({ apiUrl }) {
               <thead className="text-xs uppercase text-slate-500"><tr><th className="py-2">Place</th><th>Assets</th><th className="text-right">Purchase value</th><th className="text-right">Current value</th></tr></thead>
               <tbody>
                 {placeTotals.map((item) => {
-                  const isSelected = selectedPlaceIds.some((id) => Number(id) === Number(item.id))
+                  const hasSubplaces = (item.subplaces || []).length > 0
+                  const isExpanded = expandedPlaceIds.some((id) => Number(id) === Number(item.id))
+                  const isPlaceSelected = selectedPlaceIds.some((id) => Number(id) === Number(item.id))
+                  const selectedSubplaceCount = (item.subplaces || []).filter((subplace) => (
+                    selectedSubplaceIds.some((id) => Number(id) === Number(subplace.id))
+                  )).length
+                  const isSelected = isPlaceSelected || selectedSubplaceCount > 0
+
                   return (
-                    <tr
-                      key={item.id}
-                      role="button"
-                      tabIndex={0}
-                      aria-pressed={isSelected}
-                      onClick={() => togglePlaceFilter(item.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          togglePlaceFilter(item.id)
-                        }
-                      }}
-                      className={`cursor-pointer border-t border-slate-100 transition-colors ${isSelected ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
-                    >
-                      <td className={`py-2 font-medium ${isSelected ? 'text-emerald-800' : 'text-slate-800'}`}>{item.name}</td>
-                      <td className="text-slate-600">{item.assetCount}</td>
-                      <td className="text-right text-slate-700">{formatCurrency(item.value)}</td>
-                      <td className="text-right text-slate-700">{formatCurrency(item.currentValue)}</td>
-                    </tr>
+                    <Fragment key={item.id}>
+                      <tr
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={hasSubplaces ? isExpanded : undefined}
+                        aria-pressed={isSelected}
+                        onClick={() => handlePlaceRowClick(item.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            handlePlaceRowClick(item.id)
+                          }
+                        }}
+                        className={`cursor-pointer border-t border-slate-100 transition-colors ${isSelected ? 'bg-emerald-50' : 'hover:bg-slate-50'}`}
+                      >
+                        <td className={`py-2 font-medium ${isSelected ? 'text-emerald-800' : 'text-slate-800'}`}>
+                          <span className="inline-flex items-center gap-1.5">
+                            {hasSubplaces ? (
+                              <ChevronDown className={`h-3.5 w-3.5 flex-shrink-0 text-slate-500 transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
+                            ) : (
+                              <span className="inline-block w-3.5" />
+                            )}
+                            <span>
+                              {item.name}
+                              {selectedSubplaceCount > 0 ? (
+                                <span className="ml-1 text-xs font-normal text-emerald-700">({selectedSubplaceCount} subplace{selectedSubplaceCount === 1 ? '' : 's'})</span>
+                              ) : null}
+                            </span>
+                          </span>
+                        </td>
+                        <td className="text-slate-600">{item.assetCount}</td>
+                        <td className="text-right text-slate-700">{formatCurrency(item.value)}</td>
+                        <td className="text-right text-slate-700">{formatCurrency(item.currentValue)}</td>
+                      </tr>
+                      {hasSubplaces && isExpanded ? (
+                        <>
+                          <tr
+                            role="button"
+                            tabIndex={0}
+                            aria-pressed={isPlaceSelected}
+                            onClick={() => togglePlaceFilter(item.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault()
+                                togglePlaceFilter(item.id)
+                              }
+                            }}
+                            className={`cursor-pointer border-t border-slate-50 transition-colors ${isPlaceSelected ? 'bg-emerald-50/80' : 'bg-slate-50/70 hover:bg-slate-100'}`}
+                          >
+                            <td className={`py-2 pl-8 text-sm ${isPlaceSelected ? 'font-semibold text-emerald-800' : 'text-slate-600'}`}>All at {item.name}</td>
+                            <td className="text-slate-500">{item.assetCount}</td>
+                            <td className="text-right text-slate-600">{formatCurrency(item.value)}</td>
+                            <td className="text-right text-slate-600">{formatCurrency(item.currentValue)}</td>
+                          </tr>
+                          {item.subplaces.map((subplace) => {
+                            const isSubplaceSelected = selectedSubplaceIds.some((id) => Number(id) === Number(subplace.id))
+                            return (
+                              <tr
+                                key={subplace.id}
+                                role="button"
+                                tabIndex={0}
+                                aria-pressed={isSubplaceSelected}
+                                onClick={() => toggleSubplaceFilter(item.id, subplace.id)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault()
+                                    toggleSubplaceFilter(item.id, subplace.id)
+                                  }
+                                }}
+                                className={`cursor-pointer border-t border-slate-50 transition-colors ${isSubplaceSelected ? 'bg-emerald-50/80' : 'bg-slate-50/70 hover:bg-slate-100'}`}
+                              >
+                                <td className={`py-2 pl-8 text-sm ${isSubplaceSelected ? 'font-semibold text-emerald-800' : 'text-slate-600'}`}>{subplace.name}</td>
+                                <td className="text-slate-500">{subplace.assetCount}</td>
+                                <td className="text-right text-slate-600">{formatCurrency(subplace.value)}</td>
+                                <td className="text-right text-slate-600">{formatCurrency(subplace.currentValue)}</td>
+                              </tr>
+                            )
+                          })}
+                        </>
+                      ) : null}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -617,7 +781,10 @@ export default function AssetManagement({ apiUrl }) {
                   <td className="px-3 py-3"><div className="font-semibold text-slate-900">{asset.name}</div><div className="text-xs text-slate-500">AST-{String(asset.id).padStart(6, '0')}</div></td>
                   <td className="px-3 py-3 text-slate-700">{asset.categoryName}</td>
                   <td className="px-3 py-3 text-slate-700">{Number(asset.quantity).toLocaleString()}</td>
-                  <td className="px-3 py-3 text-slate-700">{asset.placeName}</td>
+                  <td className="px-3 py-3 text-slate-700">
+                    <div>{asset.placeName}</div>
+                    {asset.subplaceName ? <div className="text-xs text-slate-500">{asset.subplaceName}</div> : null}
+                  </td>
                   <td className="px-3 py-3 text-slate-700">{formatCurrency(asset.purchaseValue)}</td>
                   <td className="px-3 py-2">
                     <div className="flex min-w-36 items-center gap-1">
@@ -794,9 +961,28 @@ export default function AssetManagement({ apiUrl }) {
                   </label>
                   <label className="text-sm font-medium text-slate-700">
                     Place
-                    <select value={form.placeId} onChange={(event) => setForm({ ...form, placeId: event.target.value })} required className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-sky-600">
+                    <select
+                      value={form.placeId}
+                      onChange={(event) => setForm({ ...form, placeId: event.target.value, subplaceId: '' })}
+                      required
+                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-sky-600"
+                    >
                       <option value="">Select place</option>
                       {places.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-sm font-medium text-slate-700">
+                    Subplace
+                    <select
+                      value={form.subplaceId}
+                      onChange={(event) => setForm({ ...form, subplaceId: event.target.value })}
+                      disabled={!form.placeId || !selectedPlaceSubplaces.length}
+                      className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 outline-none focus:border-sky-600 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
+                    >
+                      <option value="">{selectedPlaceSubplaces.length ? 'No subplace' : (form.placeId ? 'No subplaces for this place' : 'Select a place first')}</option>
+                      {selectedPlaceSubplaces.map((subplace) => (
+                        <option key={subplace.id} value={subplace.id}>{subplace.name}</option>
+                      ))}
                     </select>
                   </label>
                   <label className="text-sm font-medium text-slate-700">
@@ -820,33 +1006,33 @@ export default function AssetManagement({ apiUrl }) {
                   </button>
                 </footer>
               </form>
-            ) : (
+            ) : activeDialog === 'categories' ? (
               <div className="space-y-5">
-              <form onSubmit={(event) => addLookup(activeDialog === 'categories' ? 'category' : 'place', event)} className="space-y-4">
+              <form onSubmit={(event) => addLookup('category', event)} className="space-y-4">
                 <label className="block text-sm font-medium text-slate-700">
-                  {activeDialog === 'categories' ? 'Category name' : 'Place name'}
+                  Category name
                   <input
                     autoFocus
-                    value={activeDialog === 'categories' ? categoryName : placeName}
-                    onChange={(event) => activeDialog === 'categories' ? setCategoryName(event.target.value) : setPlaceName(event.target.value)}
+                    value={categoryName}
+                    onChange={(event) => setCategoryName(event.target.value)}
                     required
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-sky-600"
-                    placeholder={activeDialog === 'categories' ? 'e.g. IT equipment' : 'e.g. Main office'}
+                    placeholder="e.g. IT equipment"
                   />
                 </label>
                 <footer className="flex justify-end gap-2 border-t border-slate-200 pt-4">
-                  <button type="submit" className="inline-flex items-center gap-2 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"><Plus className="h-4 w-4" />Add {activeDialog === 'categories' ? 'category' : 'place'}</button>
+                  <button type="submit" className="inline-flex items-center gap-2 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"><Plus className="h-4 w-4" />Add category</button>
                 </footer>
               </form>
               <ul className="max-h-72 divide-y divide-slate-100 overflow-y-auto border-y border-slate-100">
-                {(activeDialog === 'categories' ? categories : places).map((item) => (
+                {categories.map((item) => (
                   <li key={item.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                     <span className="min-w-0 truncate text-slate-800">
                       {item.name} <span className="text-xs text-slate-500">({item.assetCount} assets)</span>
                     </span>
                     <button
                       type="button"
-                      onClick={() => deleteLookup(activeDialog === 'categories' ? 'category' : 'place', item)}
+                      onClick={() => deleteLookup('category', item)}
                       disabled={item.assetCount > 0}
                       title={item.assetCount > 0 ? 'Move or delete assigned assets first' : 'Delete'}
                       aria-label={`Delete ${item.name}`}
@@ -856,13 +1042,100 @@ export default function AssetManagement({ apiUrl }) {
                     </button>
                   </li>
                 ))}
-                {!(activeDialog === 'categories' ? categories : places).length && (
-                  <li className="py-5 text-center text-sm text-slate-500">No {activeDialog === 'categories' ? 'categories' : 'places'} yet.</li>
+                {!categories.length && (
+                  <li className="py-5 text-center text-sm text-slate-500">No categories yet.</li>
                 )}
               </ul>
               <footer className="flex justify-end">
                 <button type="button" onClick={() => setActiveDialog(null)} className="border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Close</button>
               </footer>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <form onSubmit={(event) => addLookup('place', event)} className="space-y-4">
+                  <label className="block text-sm font-medium text-slate-700">
+                    Place name
+                    <input
+                      autoFocus
+                      value={placeName}
+                      onChange={(event) => setPlaceName(event.target.value)}
+                      required
+                      className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-slate-900 outline-none focus:border-sky-600"
+                      placeholder="e.g. Main office"
+                    />
+                  </label>
+                  <footer className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+                    <button type="submit" className="inline-flex items-center gap-2 bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"><Plus className="h-4 w-4" />Add place</button>
+                  </footer>
+                </form>
+                <ul className="max-h-80 space-y-3 overflow-y-auto border-y border-slate-100 py-3">
+                  {places.map((place) => (
+                    <li key={place.id} className="rounded-md border border-slate-200 p-3">
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="min-w-0 truncate font-semibold text-slate-800">
+                          {place.name} <span className="font-normal text-xs text-slate-500">({place.assetCount} assets)</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => deleteLookup('place', place)}
+                          disabled={place.assetCount > 0}
+                          title={place.assetCount > 0 ? 'Move or delete assigned assets first' : 'Delete'}
+                          aria-label={`Delete ${place.name}`}
+                          className="inline-flex h-8 w-8 flex-shrink-0 items-center justify-center border border-slate-200 text-rose-700 disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Subplaces</p>
+                        <ul className="space-y-1">
+                          {(place.subplaces || []).map((subplace) => (
+                            <li key={subplace.id} className="flex items-center justify-between gap-2 rounded bg-slate-50 px-2 py-1.5 text-sm">
+                              <span className="min-w-0 truncate text-slate-700">
+                                {subplace.name} <span className="text-xs text-slate-500">({subplace.assetCount} assets)</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => deleteSubplace(subplace)}
+                                disabled={subplace.assetCount > 0}
+                                title={subplace.assetCount > 0 ? 'Move or delete assigned assets first' : 'Delete subplace'}
+                                aria-label={`Delete subplace ${subplace.name}`}
+                                className="inline-flex h-7 w-7 flex-shrink-0 items-center justify-center border border-slate-200 text-rose-700 disabled:cursor-not-allowed disabled:opacity-30"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                          {!(place.subplaces || []).length && (
+                            <li className="px-1 py-1 text-xs text-slate-500">No subplaces yet.</li>
+                          )}
+                        </ul>
+                        <form onSubmit={(event) => addSubplace(place, event)} className="flex gap-2">
+                          <input
+                            value={subplaceDrafts[place.id] || ''}
+                            onChange={(event) => setSubplaceDrafts((current) => ({ ...current, [place.id]: event.target.value }))}
+                            placeholder="Add subplace"
+                            className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 outline-none focus:border-sky-600"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!String(subplaceDrafts[place.id] || '').trim()}
+                            className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Plus className="h-3.5 w-3.5" />Add
+                          </button>
+                        </form>
+                      </div>
+                    </li>
+                  ))}
+                  {!places.length && (
+                    <li className="py-5 text-center text-sm text-slate-500">No places yet.</li>
+                  )}
+                </ul>
+                <footer className="flex justify-end">
+                  <button type="button" onClick={() => setActiveDialog(null)} className="border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700">Close</button>
+                </footer>
               </div>
             )}
           </section>

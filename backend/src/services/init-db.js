@@ -241,6 +241,16 @@ async function initializeDatabase() {
     );
   `;
 
+  const assetSubplacesTable = `
+    CREATE TABLE IF NOT EXISTS asset_subplaces (
+      id SERIAL PRIMARY KEY,
+      place_id INTEGER NOT NULL REFERENCES asset_places(id) ON DELETE CASCADE,
+      name VARCHAR(150) NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (place_id, name)
+    );
+  `;
+
   const assetsTable = `
     CREATE TABLE IF NOT EXISTS assets (
       id SERIAL PRIMARY KEY,
@@ -248,6 +258,7 @@ async function initializeDatabase() {
       category_id INTEGER NOT NULL REFERENCES asset_categories(id) ON DELETE RESTRICT,
       quantity NUMERIC(12,2) NOT NULL DEFAULT 1 CHECK (quantity >= 0),
       place_id INTEGER NOT NULL REFERENCES asset_places(id) ON DELETE RESTRICT,
+      subplace_id INTEGER REFERENCES asset_subplaces(id) ON DELETE RESTRICT,
       purchase_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_value >= 0),
       current_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (current_value >= 0),
       repair_status VARCHAR(30) NOT NULL DEFAULT 'En service' CHECK (repair_status IN ('En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu')),
@@ -356,11 +367,16 @@ async function initializeDatabase() {
   `);
   await query(assetCategoriesTable);
   await query(assetPlacesTable);
+  await query(assetSubplacesTable);
   await query(assetsTable);
   await query('ALTER TABLE assets ADD COLUMN IF NOT EXISTS current_value NUMERIC(14,2);');
   await query('UPDATE assets SET current_value = purchase_value WHERE current_value IS NULL;');
   await query('ALTER TABLE assets ALTER COLUMN current_value SET DEFAULT 0;');
   await query('ALTER TABLE assets ALTER COLUMN current_value SET NOT NULL;');
+  await query(`
+    ALTER TABLE assets
+    ADD COLUMN IF NOT EXISTS subplace_id INTEGER REFERENCES asset_subplaces(id) ON DELETE RESTRICT;
+  `);
   await query(`
     ALTER TABLE assets
     ADD COLUMN IF NOT EXISTS repair_status VARCHAR(30) NOT NULL DEFAULT 'En service';
@@ -408,6 +424,8 @@ async function initializeDatabase() {
   `);
   await query('CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);');
   await query('CREATE INDEX IF NOT EXISTS idx_assets_place_id ON assets(place_id);');
+  await query('CREATE INDEX IF NOT EXISTS idx_assets_subplace_id ON assets(subplace_id);');
+  await query('CREATE INDEX IF NOT EXISTS idx_asset_subplaces_place_id ON asset_subplaces(place_id);');
   await query(`
     ALTER TABLE logistics_order_physical_counts
     ADD COLUMN IF NOT EXISTS control_quantities JSONB NOT NULL DEFAULT '{}'::jsonb;

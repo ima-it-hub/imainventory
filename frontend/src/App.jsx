@@ -2129,14 +2129,14 @@ function App() {
     <div className="app-shell h-screen overflow-hidden bg-white p-0 md:p-0 lg:p-0">
       <div className="w-full h-full">
         <div className="dashboard-layout relative flex min-h-screen flex-col gap-0 lg:flex-row">
-          <aside className={`sidebar-panel fixed inset-y-0 left-0 z-40 flex w-[210px] flex-col p-0 text-slate-100 shadow-none transition-transform duration-200 lg:fixed lg:top-0 lg:h-screen lg:w-[210px] lg:flex-shrink-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-            <div className="brand-header flex w-full items-center justify-center px-3 py-4">
+          <aside className={`sidebar-panel fixed inset-y-0 left-0 z-40 flex h-screen max-h-screen w-[210px] flex-col overflow-hidden p-0 text-slate-100 shadow-none transition-transform duration-200 lg:fixed lg:top-0 lg:h-screen lg:w-[210px] lg:flex-shrink-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+            <div className="brand-header flex w-full flex-shrink-0 items-center justify-center px-3 py-4">
               <div className="brand-logo flex h-28 w-full max-w-[190px] items-center justify-center overflow-hidden rounded-md bg-white/5 ring-0">
                 <img src="/ima.png" alt="Company logo" className="h-full w-full object-contain" />
               </div>
             </div>
 
-            <nav className="sidebar-nav mt-2 flex-1 space-y-1 px-2 pb-4">
+            <nav className="sidebar-nav mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 pb-4">
               {visibleSidebarPages.map((page) => {
                 const Icon = page.icon
 
@@ -2162,7 +2162,7 @@ function App() {
               })}
             </nav>
 
-            <div className="border-t border-slate-700/80 p-2">
+            <div className="flex-shrink-0 border-t border-slate-700/80 p-2">
               <button
                 type="button"
                 onClick={async () => {

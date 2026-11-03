@@ -305,15 +305,15 @@ app.post('/api/assets', async (req, res) => {
       : Number(currentValue);
     const numericCategoryId = Number(categoryId);
     const numericPlaceId = Number(placeId);
-    const normalizedRepairStatus = repairStatus || 'Réparable';
-    const savedCurrentValue = normalizedRepairStatus === 'Irréparable' ? 0 : numericCurrentValue;
+    const normalizedRepairStatus = repairStatus || 'En service';
+    const savedCurrentValue = ['Hors service', 'Vendu'].includes(normalizedRepairStatus) ? 0 : numericCurrentValue;
 
     if (!cleanName || !Number.isInteger(numericCategoryId) || numericCategoryId <= 0
       || !Number.isInteger(numericPlaceId) || numericPlaceId <= 0
       || !Number.isFinite(numericQuantity) || numericQuantity < 0
       || !Number.isFinite(numericPurchaseValue) || numericPurchaseValue < 0
       || !Number.isFinite(numericCurrentValue) || numericCurrentValue < 0
-      || !['Réparable', 'Irréparable', 'Sent to maintenance'].includes(normalizedRepairStatus)) {
+      || !['En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu'].includes(normalizedRepairStatus)) {
       return res.status(400).json({ error: 'Enter a name, category, place, and valid non-negative quantity and values.' });
     }
 
@@ -341,15 +341,15 @@ app.put('/api/assets/:id', async (req, res) => {
       : Number(currentValue);
     const numericCategoryId = Number(categoryId);
     const numericPlaceId = Number(placeId);
-    const normalizedRepairStatus = repairStatus || 'Réparable';
-    const savedCurrentValue = normalizedRepairStatus === 'Irréparable' ? 0 : numericCurrentValue;
+    const normalizedRepairStatus = repairStatus || 'En service';
+    const savedCurrentValue = ['Hors service', 'Vendu'].includes(normalizedRepairStatus) ? 0 : numericCurrentValue;
 
     if (!cleanName || !Number.isInteger(numericCategoryId) || numericCategoryId <= 0
       || !Number.isInteger(numericPlaceId) || numericPlaceId <= 0
       || !Number.isFinite(numericQuantity) || numericQuantity < 0
       || !Number.isFinite(numericPurchaseValue) || numericPurchaseValue < 0
       || !Number.isFinite(numericCurrentValue) || numericCurrentValue < 0
-      || !['Réparable', 'Irréparable', 'Sent to maintenance'].includes(normalizedRepairStatus)) {
+      || !['En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu'].includes(normalizedRepairStatus)) {
       return res.status(400).json({ error: 'Enter a name, category, place, and valid non-negative quantity and values.' });
     }
 
@@ -372,15 +372,15 @@ app.put('/api/assets/:id', async (req, res) => {
 app.patch('/api/assets/:id/repair-status', async (req, res) => {
   try {
     const repairStatus = String(req.body?.repairStatus || '').trim();
-    if (!['Réparable', 'Irréparable', 'Sent to maintenance'].includes(repairStatus)) {
-      return res.status(400).json({ error: 'Choose a valid asset repair status.' });
+    if (!['En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu'].includes(repairStatus)) {
+      return res.status(400).json({ error: 'Choose a valid asset status.' });
     }
 
-    const isNotRepairable = repairStatus === 'Irréparable';
+    const forcesZeroValue = ['Hors service', 'Vendu'].includes(repairStatus);
     const rows = await query(`
       UPDATE assets
       SET repair_status = $1,
-          current_value = ${isNotRepairable ? '0' : 'current_value'},
+          current_value = ${forcesZeroValue ? '0' : 'current_value'},
           updated_at = NOW()
       WHERE id = $2
       RETURNING id, repair_status AS "repairStatus", current_value AS "currentValue";
@@ -402,7 +402,7 @@ app.patch('/api/assets/:id/current-value', async (req, res) => {
 
     const rows = await query(`
       UPDATE assets
-        SET current_value = CASE WHEN repair_status = 'Irréparable' THEN 0 ELSE $1 END,
+        SET current_value = CASE WHEN repair_status IN ('Hors service', 'Vendu') THEN 0 ELSE $1 END,
           updated_at = NOW()
       WHERE id = $2
         RETURNING id, current_value AS "currentValue", repair_status AS "repairStatus";

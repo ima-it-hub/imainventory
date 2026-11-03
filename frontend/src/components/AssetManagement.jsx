@@ -41,6 +41,32 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;')
 }
 
+const ASSET_STATUS_OPTIONS = [
+  'En service',
+  'En panne',
+  'En maintenance',
+  'Hors service',
+  'Vendu',
+]
+
+const ZERO_VALUE_ASSET_STATUSES = new Set(['Hors service', 'Vendu'])
+
+function getAssetStatusClasses(status) {
+  switch (status) {
+    case 'En panne':
+      return 'border-rose-300 bg-rose-100 text-rose-800'
+    case 'En maintenance':
+      return 'border-orange-300 bg-orange-100 text-orange-800'
+    case 'Hors service':
+      return 'border-slate-300 bg-slate-100 text-slate-700'
+    case 'Vendu':
+      return 'border-violet-300 bg-violet-100 text-violet-800'
+    case 'En service':
+    default:
+      return 'border-emerald-300 bg-emerald-100 text-emerald-800'
+  }
+}
+
 export default function AssetManagement({ apiUrl }) {
   const toast = useToast()
   const [assets, setAssets] = useState([])
@@ -67,7 +93,7 @@ export default function AssetManagement({ apiUrl }) {
     placeId: '',
     purchaseValue: '',
     depreciationPercentage: '0',
-    repairStatus: 'Réparable',
+    repairStatus: 'En service',
   })
 
   useEffect(() => {
@@ -242,7 +268,7 @@ export default function AssetManagement({ apiUrl }) {
   const placeTotals = summarizeBy('placeId', 'placeName', places)
 
   function resetForm() {
-    setForm({ name: '', categoryId: '', quantity: '1', placeId: '', purchaseValue: '', depreciationPercentage: '0', repairStatus: 'Réparable' })
+    setForm({ name: '', categoryId: '', quantity: '1', placeId: '', purchaseValue: '', depreciationPercentage: '0', repairStatus: 'En service' })
     setEditingId(null)
     setActiveDialog(null)
   }
@@ -256,7 +282,7 @@ export default function AssetManagement({ apiUrl }) {
       placeId: String(asset.placeId),
       purchaseValue: String(asset.purchaseValue),
       depreciationPercentage: getDepreciationPercentage(asset.purchaseValue, asset.currentValue ?? asset.purchaseValue),
-      repairStatus: asset.repairStatus || 'Réparable',
+      repairStatus: asset.repairStatus || 'En service',
     })
     setError('')
     setActiveDialog('asset')
@@ -600,7 +626,7 @@ export default function AssetManagement({ apiUrl }) {
                         min="0"
                         max="100"
                         step="0.01"
-                        disabled={asset.repairStatus === 'Irréparable'}
+                        disabled={ZERO_VALUE_ASSET_STATUSES.has(asset.repairStatus)}
                         value={currentValueDrafts[asset.id] ?? getDepreciationPercentage(asset.purchaseValue, asset.currentValue ?? asset.purchaseValue)}
                         onChange={(event) => setCurrentValueDrafts((current) => ({ ...current, [asset.id]: event.target.value }))}
                         onKeyDown={(event) => {
@@ -616,7 +642,7 @@ export default function AssetManagement({ apiUrl }) {
                       <button
                         type="button"
                         onClick={() => saveCurrentValue(asset)}
-                        disabled={savingCurrentValueId === asset.id || currentValueDrafts[asset.id] === undefined}
+                        disabled={savingCurrentValueId === asset.id || currentValueDrafts[asset.id] === undefined || ZERO_VALUE_ASSET_STATUSES.has(asset.repairStatus)}
                         title="Save depreciation percentage"
                         aria-label={`Save depreciation percentage for ${asset.name}`}
                         className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center border border-sky-200 text-sky-700 hover:bg-sky-50 disabled:cursor-not-allowed disabled:opacity-40"
@@ -631,14 +657,14 @@ export default function AssetManagement({ apiUrl }) {
                   <td className="px-3 py-3"><button type="button" onClick={() => printAssetQr(asset)} title={`Print QR for ${asset.name}`} aria-label={`Print QR for ${asset.name}`} className="inline-flex h-9 w-9 items-center justify-center border border-slate-200 text-slate-700 hover:bg-slate-100"><Printer className="h-4 w-4" /></button></td>
                   <td className="px-3 py-3">
                     <select
-                      value={asset.repairStatus || 'Réparable'}
+                      value={asset.repairStatus || 'En service'}
                       onChange={(event) => saveRepairStatus(asset, event.target.value)}
-                      aria-label={`Repair status for ${asset.name}`}
-                      className={`rounded-md border px-2 py-1.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-400 ${asset.repairStatus === 'Irréparable' ? 'border-rose-300 bg-rose-100 text-rose-800' : asset.repairStatus === 'Sent to maintenance' ? 'border-orange-300 bg-orange-100 text-orange-800' : 'border-emerald-300 bg-emerald-100 text-emerald-800'}`}
+                      aria-label={`Status for ${asset.name}`}
+                      className={`rounded-md border px-2 py-1.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-slate-400 ${getAssetStatusClasses(asset.repairStatus)}`}
                     >
-                      <option value="Réparable">Réparable</option>
-                      <option value="Irréparable">Irréparable</option>
-                      <option value="Sent to maintenance">Sent to maintenance</option>
+                      {ASSET_STATUS_OPTIONS.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
                     </select>
                   </td>
                   <td className="px-3 py-3">

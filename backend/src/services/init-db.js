@@ -250,7 +250,7 @@ async function initializeDatabase() {
       place_id INTEGER NOT NULL REFERENCES asset_places(id) ON DELETE RESTRICT,
       purchase_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_value >= 0),
       current_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (current_value >= 0),
-      repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable' CHECK (repair_status IN ('Réparable', 'Irréparable', 'Sent to maintenance')),
+      repair_status VARCHAR(30) NOT NULL DEFAULT 'En service' CHECK (repair_status IN ('En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -363,18 +363,34 @@ async function initializeDatabase() {
   await query('ALTER TABLE assets ALTER COLUMN current_value SET NOT NULL;');
   await query(`
     ALTER TABLE assets
-    ADD COLUMN IF NOT EXISTS repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable';
+    ADD COLUMN IF NOT EXISTS repair_status VARCHAR(30) NOT NULL DEFAULT 'En service';
   `);
   await query('ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_repair_status_check;');
+  await query('ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_irreparable_value_check;');
+  await query('ALTER TABLE assets DROP CONSTRAINT IF EXISTS assets_zero_value_status_check;');
+  await query(`
+    UPDATE assets
+    SET repair_status = CASE repair_status
+      WHEN 'Réparable' THEN 'En service'
+      WHEN 'Irréparable' THEN 'Hors service'
+      WHEN 'Sent to maintenance' THEN 'En maintenance'
+      ELSE repair_status
+    END
+    WHERE repair_status IN ('Réparable', 'Irréparable', 'Sent to maintenance');
+  `);
+  await query(`
+    ALTER TABLE assets
+    ALTER COLUMN repair_status SET DEFAULT 'En service';
+  `);
   await query(`
     ALTER TABLE assets
     ADD CONSTRAINT assets_repair_status_check
-    CHECK (repair_status IN ('Réparable', 'Irréparable', 'Sent to maintenance'));
+    CHECK (repair_status IN ('En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu'));
   `);
   await query(`
     DO $$ BEGIN
-      ALTER TABLE assets ADD CONSTRAINT assets_irreparable_value_check
-      CHECK (repair_status <> 'Irréparable' OR current_value = 0);
+      ALTER TABLE assets ADD CONSTRAINT assets_zero_value_status_check
+      CHECK (repair_status NOT IN ('Hors service', 'Vendu') OR current_value = 0);
     EXCEPTION WHEN duplicate_object THEN NULL;
     END $$;
   `);

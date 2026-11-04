@@ -13,6 +13,8 @@ const {
   getLogisticsOrdersFromOdbc,
   getTransferSyncRowsFromOdbc,
   getLogisticsOrderDetailsForSyncFromOdbc,
+  getDetailItemOid,
+  getItemStockQuantitiesFromOdbc,
   normalizeWarehouseFilter,
 } = require('./src/services/odbc');
 const { computeReconciliation } = require('./src/lib/reconciliation');
@@ -1382,6 +1384,43 @@ app.patch('/api/logistics/transfers/:reference/notes', async (req, res) => {
   }
 });
 
+async function attachOdbcSystemQuantities(details, warehouseName) {
+  const itemOids = (details || []).map((detail) => getDetailItemOid(detail)).filter(Boolean);
+  let stockByItem = new Map();
+
+  try {
+    stockByItem = await getItemStockQuantitiesFromOdbc(itemOids, warehouseName);
+  } catch (error) {
+    console.warn('ODBC system quantity lookup failed, using inventory snapshot:', error.message);
+    if (itemOids.length) {
+      const params = [itemOids];
+      let warehouseClause = '';
+      if (String(warehouseName || '').trim()) {
+        warehouseClause = 'AND TRIM(warehouse_name) ILIKE $2';
+        params.push(`%${String(warehouseName).trim()}%`);
+      }
+      const rows = await query(`
+        SELECT source_item_oid AS "sourceItemOid", SUM(current_quantity)::float AS "quantity"
+        FROM inventory_items
+        WHERE source_item_oid = ANY($1)
+          ${warehouseClause}
+        GROUP BY source_item_oid;
+      `, params);
+      stockByItem = new Map(
+        (rows || []).map((row) => [String(row.sourceItemOid), Number(row.quantity) || 0]),
+      );
+    }
+  }
+
+  return (details || []).map((detail) => {
+    const itemOid = getDetailItemOid(detail);
+    return {
+      ...detail,
+      odbcSystemQuantity: itemOid && stockByItem.has(itemOid) ? stockByItem.get(itemOid) : undefined,
+    };
+  });
+}
+
 app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
   try {
     const orderNumber = String(req.params.orderNumber);
@@ -1413,8 +1452,16 @@ app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
       ...detail,
       demandSourceWarehouse: demandByKey[detail.detailKey] || '',
     }));
+    const orderWarehouseRows = await query(
+      'SELECT warehouse_name AS "warehouseName" FROM logistics_orders WHERE order_number = $1',
+      [orderNumber],
+    );
+    const detailsWithStock = await attachOdbcSystemQuantities(
+      details,
+      orderWarehouseRows[0]?.warehouseName || req.query.warehouse || '',
+    );
     const payload = JSON.stringify(
-      { details, count: details.length },
+      { details: detailsWithStock, count: detailsWithStock.length },
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
     );
     res.type('json').send(payload);
@@ -1439,9 +1486,17 @@ app.get('/api/logistics/transfers/:reference/details', async (req, res) => {
       savedQuantities,
       savedControlQuantities,
     );
+    const transferWarehouseRows = await query(
+      'SELECT warehouse_source_name AS "warehouseName" FROM logistics_transfers WHERE transfer_reference = $1',
+      [transferReference],
+    );
+    const detailsWithStock = await attachOdbcSystemQuantities(
+      details,
+      transferWarehouseRows[0]?.warehouseName || req.query.warehouse || '',
+    );
 
     const payload = JSON.stringify(
-      { details, count: details.length },
+      { details: detailsWithStock, count: detailsWithStock.length },
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
     );
     res.type('json').send(payload);

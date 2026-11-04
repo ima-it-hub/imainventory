@@ -186,6 +186,42 @@ async function buildTransferWarehouseFilterSql(warehouseFilter = null) {
   };
 }
 
+function getDetailItemOid(detail) {
+  return String(detail?.Item ?? detail?.item ?? detail?.OidItem ?? detail?.oiditem ?? '').trim();
+}
+
+async function getItemStockQuantitiesFromOdbc(itemOids = [], warehouseFilter = null) {
+  const ids = [...new Set((itemOids || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const quantities = new Map();
+  if (!ids.length) return quantities;
+
+  const placeholders = ids.map(() => '?').join(', ');
+  const params = [...ids];
+  const warehouseName = String(warehouseFilter || '').trim();
+  const warehouseSql = warehouseName ? 'AND "COM_Warehouse"."Label1" ILIKE ?' : '';
+  if (warehouseName) params.push(`%${warehouseName}%`);
+
+  const sql = `
+    SELECT "COM_Item"."Oid"::text AS "OidItem",
+      sum("COM_BatchWarehouse"."LogicalQuantity") AS "Quantitedepot"
+    FROM "COM_Batch"
+      JOIN "COM_Item" ON "COM_Batch"."Item" = "COM_Item"."Oid"
+      JOIN "COM_BatchWarehouse" ON "COM_BatchWarehouse"."Batch" = "COM_Batch"."Oid"
+      JOIN "COM_Warehouse" ON "COM_Warehouse"."Oid" = "COM_BatchWarehouse"."Warehouse"
+    WHERE "COM_Item"."Oid"::text IN (${placeholders})
+      ${warehouseSql}
+    GROUP BY "COM_Item"."Oid";
+  `;
+
+  const rows = await queryOdbc(sql, params);
+  for (const row of rows || []) {
+    const itemOid = String(row?.OidItem ?? row?.oiditem ?? '').trim();
+    const quantity = Number(row?.Quantitedepot ?? row?.quantitedepot);
+    if (itemOid) quantities.set(itemOid, Number.isFinite(quantity) ? quantity : 0);
+  }
+  return quantities;
+}
+
 async function getStockSnapshot(warehouseFilter = null) {
   const filters = [];
   const params = [];
@@ -373,6 +409,8 @@ function getLogisticsOrderDetailsSql(additionalFilters, syncFieldsOnly = false, 
 
 module.exports = {
   queryOdbc,
+  getDetailItemOid,
+  getItemStockQuantitiesFromOdbc,
   getStockSnapshot,
   normalizeWarehouseFilter,
   resolveWarehouseFilter,

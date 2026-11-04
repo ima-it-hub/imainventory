@@ -212,7 +212,7 @@ export default function OrderDetailsDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby="order-details-title"
-        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden border border-slate-300 bg-white shadow-2xl"
+        className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden border border-slate-300 bg-white shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         <header className="relative shrink-0 border-b border-slate-300 px-4 pb-3 pt-4 sm:px-5 sm:pb-4 sm:pt-5">
@@ -265,7 +265,7 @@ export default function OrderDetailsDialog({
                         <p className="text-xs font-semibold text-slate-600">{formatColisage(detail)}</p>
                       </div>
                       <p className="text-sm font-semibold leading-snug text-slate-900">{detail.Label1 || '—'}</p>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <div>
                           <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Qté CMD</p>
                           <p className="text-sm tabular-nums text-slate-800">{formatQuantity(detail.Quantity)}</p>
@@ -297,6 +297,10 @@ export default function OrderDetailsDialog({
                             className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-center text-sm text-slate-900 outline-none focus:border-emerald-600"
                           />
                         </div>
+                        <div>
+                          <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Qté SYS</p>
+                          <p className="text-sm tabular-nums text-slate-800">{formatQuantity(detail.odbcSystemQuantity)}</p>
+                        </div>
                       </div>
                       {renderDemandSelect(detail)}
                     </article>
@@ -305,37 +309,39 @@ export default function OrderDetailsDialog({
               </div>
 
               <div className="hidden min-[480px]:block">
-                <table className="w-full table-fixed border-collapse border border-slate-300 text-left text-sm">
+                <table className="w-full table-fixed border-collapse border border-slate-300 text-center text-sm">
                   <colgroup>
                     <col className="w-[5%]" />
-                    <col className="w-[42%]" />
-                    <col className="w-[11%]" />
+                    <col className="w-[34%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[13%]" />
                     <col className="w-[14%]" />
                     <col className="w-[14%]" />
-                    <col className="w-[14%]" />
+                    <col className="w-[10%]" />
                   </colgroup>
                   <thead className="bg-slate-100 text-[11px] uppercase tracking-wide text-slate-600">
                     <tr>
                       <th className="border border-slate-300 px-2 py-2 text-center font-bold">N°</th>
-                      <th className="border border-slate-300 px-3 py-2 font-bold">Désignation</th>
-                      <th className="border border-slate-300 px-2 py-2 text-right font-bold">Qté CMD</th>
+                      <th className="border border-slate-300 px-3 py-2 text-center font-bold">Désignation</th>
+                      <th className="border border-slate-300 px-2 py-2 text-center font-bold">Qté CMD</th>
                       <th className="border border-slate-300 px-2 py-2 text-center font-bold">Colissage</th>
                       <th className="border border-slate-300 px-2 py-2 text-center font-bold">Préparé</th>
                       <th className="border border-slate-300 px-2 py-2 text-center font-bold">Contrôle</th>
+                      <th className="border border-slate-300 px-2 py-2 text-center font-bold">Qté SYS</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orderDetails.map((detail, index) => {
                       const detailKey = detail.detailKey
                       return (
-                        <tr key={detailKey} className="align-top odd:bg-white even:bg-slate-50/70">
+                        <tr key={detailKey} className="align-middle odd:bg-white even:bg-slate-50/70">
                           <td className="border border-slate-300 px-2 py-2 text-center font-semibold text-slate-700">
                             {index + 1}
                           </td>
-                          <td className="break-words border border-slate-300 px-3 py-2 font-medium leading-snug whitespace-normal text-slate-900">
+                          <td className="break-words border border-slate-300 px-3 py-2 text-center font-medium leading-snug whitespace-normal text-slate-900">
                             {detail.Label1 || '—'}
                           </td>
-                          <td className="border border-slate-300 px-2 py-2 text-right tabular-nums whitespace-nowrap text-slate-700">
+                          <td className="border border-slate-300 px-2 py-2 text-center tabular-nums whitespace-nowrap text-slate-700">
                             {formatQuantity(detail.Quantity)}
                           </td>
                           <td className="border border-slate-300 px-2 py-2 text-center tabular-nums whitespace-nowrap text-slate-700">
@@ -366,6 +372,9 @@ export default function OrderDetailsDialog({
                               aria-label={`Qté contrôle for ${detail.Label1 || 'item'}`}
                               className="mx-auto block w-16 rounded-md border border-slate-300 px-1.5 py-1.5 text-center text-sm text-slate-900 outline-none focus:border-emerald-600"
                             />
+                          </td>
+                          <td className="border border-slate-300 px-2 py-2 text-center tabular-nums whitespace-nowrap text-slate-700">
+                            {formatQuantity(detail.odbcSystemQuantity)}
                           </td>
                         </tr>
                       )

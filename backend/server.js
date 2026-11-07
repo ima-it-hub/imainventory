@@ -1384,13 +1384,18 @@ app.patch('/api/logistics/transfers/:reference/notes', async (req, res) => {
   }
 });
 
-async function attachOdbcSystemQuantities(details, warehouseName) {
+async function attachOdbcSystemQuantities(details, warehouseName, { requireOdbc = false } = {}) {
   const itemOids = (details || []).map((detail) => getDetailItemOid(detail)).filter(Boolean);
   let stockByItem = new Map();
 
   try {
     stockByItem = await getItemStockQuantitiesFromOdbc(itemOids, warehouseName);
   } catch (error) {
+    if (requireOdbc) {
+      throw new Error(`Unable to read system quantities from ODBC for ${warehouseName || 'the order warehouse'}.`, {
+        cause: error,
+      });
+    }
     console.warn('ODBC system quantity lookup failed, using inventory snapshot:', error.message);
     if (itemOids.length) {
       const params = [itemOids];
@@ -1416,7 +1421,7 @@ async function attachOdbcSystemQuantities(details, warehouseName) {
     const itemOid = getDetailItemOid(detail);
     return {
       ...detail,
-      odbcSystemQuantity: itemOid && stockByItem.has(itemOid) ? stockByItem.get(itemOid) : undefined,
+      systemQuantity: itemOid && stockByItem.has(itemOid) ? stockByItem.get(itemOid) : 0,
     };
   });
 }
@@ -1456,20 +1461,26 @@ app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
       'SELECT warehouse_name AS "warehouseName" FROM logistics_orders WHERE order_number = $1',
       [orderNumber],
     );
-    const hasSavedSystemQuantity = (detail) => Object.prototype.hasOwnProperty.call(detail, 'odbcSystemQuantity');
+    const hasSavedSystemQuantity = (detail) => (
+      Object.prototype.hasOwnProperty.call(detail, 'systemQuantity')
+      || Object.prototype.hasOwnProperty.call(detail, 'odbcSystemQuantity')
+    );
     const legacyDetails = details.filter((detail) => !hasSavedSystemQuantity(detail));
     const legacyDetailsWithStock = legacyDetails.length
       ? await attachOdbcSystemQuantities(
         legacyDetails,
         orderWarehouseRows[0]?.warehouseName || req.query.warehouse || '',
+        { requireOdbc: true },
       )
       : [];
     let legacyDetailIndex = 0;
-    const detailsWithStock = details.map((detail) => (
-      hasSavedSystemQuantity(detail)
-        ? detail
-        : { ...detail, odbcSystemQuantity: legacyDetailsWithStock[legacyDetailIndex++].odbcSystemQuantity }
-    ));
+    const detailsWithStock = details.map((detail) => {
+      if (Object.prototype.hasOwnProperty.call(detail, 'systemQuantity')) return detail;
+      if (Object.prototype.hasOwnProperty.call(detail, 'odbcSystemQuantity')) {
+        return { ...detail, systemQuantity: detail.odbcSystemQuantity };
+      }
+      return { ...detail, systemQuantity: legacyDetailsWithStock[legacyDetailIndex++].systemQuantity };
+    });
     const payload = JSON.stringify(
       { details: detailsWithStock, count: detailsWithStock.length },
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
@@ -2210,7 +2221,7 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
 
     for (const { warehouseName, snapshots } of detailsByWarehouse.values()) {
       const details = snapshots.flatMap((snapshot) => snapshot.details);
-      const detailsWithStock = await attachOdbcSystemQuantities(details, warehouseName);
+      const detailsWithStock = await attachOdbcSystemQuantities(details, warehouseName, { requireOdbc: true });
       let detailIndex = 0;
       for (const snapshot of snapshots) {
         snapshot.details = snapshot.details.map(() => detailsWithStock[detailIndex++]);
@@ -2237,15 +2248,20 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
     }
 
     const count = Math.max(upsertedOrders, upsertedDetails, ordersToSync.length);
+    const savedSystemQuantities = detailSnapshots.reduce(
+      (total, snapshot) => total + snapshot.details.filter((detail) => Number.isFinite(Number(detail.systemQuantity))).length,
+      0,
+    );
     res.json({
       ok: true,
       count,
       upsertedOrders,
       upsertedDetails,
+      savedSystemQuantities,
       warehouse,
       message: warehouse
-        ? `Synced ${ordersToSync.length} orders for ${warehouse} (${upsertedOrders} headers updated, ${upsertedDetails} detail sets updated).`
-        : `Synced ${ordersToSync.length} logistics orders from ODBC (${upsertedOrders} headers updated, ${upsertedDetails} detail sets updated).`,
+        ? `Synced ${ordersToSync.length} orders for ${warehouse} (${upsertedOrders} headers and ${upsertedDetails} detail sets updated; ${savedSystemQuantities} system quantities saved).`
+        : `Synced ${ordersToSync.length} logistics orders from ODBC (${upsertedOrders} headers and ${upsertedDetails} detail sets updated; ${savedSystemQuantities} system quantities saved).`,
     });
   } catch (error) {
     console.error('ODBC logistics sync failed:', error);

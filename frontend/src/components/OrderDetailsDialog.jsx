@@ -299,7 +299,7 @@ export default function OrderDetailsDialog({
                         </div>
                         <div>
                           <p className="mb-1 text-[10px] font-bold uppercase text-slate-500">Qté SYS</p>
-                          <p className="text-sm tabular-nums text-slate-800">{formatQuantity(detail.odbcSystemQuantity)}</p>
+                          <p className="text-sm tabular-nums text-slate-800">{formatQuantity(detail.systemQuantity)}</p>
                         </div>
                       </div>
                       {renderDemandSelect(detail)}
@@ -374,7 +374,7 @@ export default function OrderDetailsDialog({
                             />
                           </td>
                           <td className="border border-slate-300 px-2 py-2 text-center tabular-nums whitespace-nowrap text-slate-700">
-                            {formatQuantity(detail.odbcSystemQuantity)}
+                            {formatQuantity(detail.systemQuantity)}
                           </td>
                         </tr>
                       )

@@ -46,10 +46,10 @@ test('orderQuantitiesMatch requires every system quantity to match a saved physi
 
 test('serializeOrderDetailSnapshots persists system quantities and converts ODBC BigInt values', () => {
   const serialized = serializeOrderDetailSnapshots([
-    { orderNumber: 'SO-100', details: [{ Batch: 42n, odbcSystemQuantity: 18 }] },
+    { orderNumber: 'SO-100', details: [{ Batch: 42n, systemQuantity: 18 }] },
   ]);
 
   assert.deepEqual(JSON.parse(serialized), [
-    { order_number: 'SO-100', details: [{ Batch: '42', odbcSystemQuantity: 18 }] },
+    { order_number: 'SO-100', details: [{ Batch: '42', systemQuantity: 18 }] },
   ]);
 });

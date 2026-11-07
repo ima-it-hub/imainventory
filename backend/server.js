@@ -1456,10 +1456,20 @@ app.get('/api/logistics/orders/:orderNumber/details', async (req, res) => {
       'SELECT warehouse_name AS "warehouseName" FROM logistics_orders WHERE order_number = $1',
       [orderNumber],
     );
-    const detailsWithStock = await attachOdbcSystemQuantities(
-      details,
-      orderWarehouseRows[0]?.warehouseName || req.query.warehouse || '',
-    );
+    const hasSavedSystemQuantity = (detail) => Object.prototype.hasOwnProperty.call(detail, 'odbcSystemQuantity');
+    const legacyDetails = details.filter((detail) => !hasSavedSystemQuantity(detail));
+    const legacyDetailsWithStock = legacyDetails.length
+      ? await attachOdbcSystemQuantities(
+        legacyDetails,
+        orderWarehouseRows[0]?.warehouseName || req.query.warehouse || '',
+      )
+      : [];
+    let legacyDetailIndex = 0;
+    const detailsWithStock = details.map((detail) => (
+      hasSavedSystemQuantity(detail)
+        ? detail
+        : { ...detail, odbcSystemQuantity: legacyDetailsWithStock[legacyDetailIndex++].odbcSystemQuantity }
+    ));
     const payload = JSON.stringify(
       { details: detailsWithStock, count: detailsWithStock.length },
       (_key, value) => typeof value === 'bigint' ? value.toString() : value,
@@ -2185,6 +2195,28 @@ app.post('/api/logistics/orders/sync-odbc', async (req, res) => {
     }
 
     const detailSnapshots = buildOrderDetailSnapshots(detailRows);
+    const warehouseByOrder = new Map(
+      ordersToSync.map((order) => [order.order_number, order.warehouse_name || warehouse || '']),
+    );
+    const detailsByWarehouse = new Map();
+    for (const snapshot of detailSnapshots) {
+      const warehouseName = String(warehouseByOrder.get(snapshot.orderNumber) || '').trim();
+      const groupKey = warehouseName.toLowerCase();
+      if (!detailsByWarehouse.has(groupKey)) {
+        detailsByWarehouse.set(groupKey, { warehouseName, snapshots: [] });
+      }
+      detailsByWarehouse.get(groupKey).snapshots.push(snapshot);
+    }
+
+    for (const { warehouseName, snapshots } of detailsByWarehouse.values()) {
+      const details = snapshots.flatMap((snapshot) => snapshot.details);
+      const detailsWithStock = await attachOdbcSystemQuantities(details, warehouseName);
+      let detailIndex = 0;
+      for (const snapshot of snapshots) {
+        snapshot.details = snapshot.details.map(() => detailsWithStock[detailIndex++]);
+      }
+    }
+
     let upsertedDetails = 0;
     if (detailSnapshots.length) {
       const detailBatchSize = 200;

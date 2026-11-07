@@ -44,12 +44,12 @@ test('orderQuantitiesMatch requires every system quantity to match a saved physi
   assert.equal(orderQuantitiesMatch([]), false);
 });
 
-test('serializeOrderDetailSnapshots converts ODBC BigInt values to JSON strings', () => {
+test('serializeOrderDetailSnapshots persists system quantities and converts ODBC BigInt values', () => {
   const serialized = serializeOrderDetailSnapshots([
-    { orderNumber: 'SO-100', details: [{ Batch: 42n }] },
+    { orderNumber: 'SO-100', details: [{ Batch: 42n, odbcSystemQuantity: 18 }] },
   ]);
 
   assert.deepEqual(JSON.parse(serialized), [
-    { order_number: 'SO-100', details: [{ Batch: '42' }] },
+    { order_number: 'SO-100', details: [{ Batch: '42', odbcSystemQuantity: 18 }] },
   ]);
 });

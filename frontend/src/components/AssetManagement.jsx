@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Boxes, Calendar, Check, ChevronDown, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
+import { Boxes, Calendar, Check, ChevronDown, Image, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
 import { useToast } from './ToastProvider'
 
 const ASSET_BASE_YEAR = 2026
@@ -105,6 +105,11 @@ export default function AssetManagement({ apiUrl }) {
   const [noteAsset, setNoteAsset] = useState(null)
   const [noteDraft, setNoteDraft] = useState('')
   const [savingNote, setSavingNote] = useState(false)
+  const [pictureAsset, setPictureAsset] = useState(null)
+  const [pictures, setPictures] = useState([])
+  const [picturesLoading, setPicturesLoading] = useState(false)
+  const [uploadingPictures, setUploadingPictures] = useState(false)
+  const [previewPicture, setPreviewPicture] = useState(null)
   const [form, setForm] = useState({
     name: '',
     categoryId: '',
@@ -501,6 +506,73 @@ export default function AssetManagement({ apiUrl }) {
     }
   }
 
+  async function openPictureDialog(asset) {
+    setPictureAsset(asset)
+    setPreviewPicture(null)
+    setPictures([])
+    setPicturesLoading(true)
+    setError('')
+    try {
+      const data = await request(`/api/assets/${asset.id}/pictures`)
+      setPictures(data.pictures || [])
+    } catch (loadError) {
+      setError(loadError.message || 'Unable to load asset pictures')
+    } finally {
+      setPicturesLoading(false)
+    }
+  }
+
+  function closePictureDialog() {
+    setPictureAsset(null)
+    setPictures([])
+    setPreviewPicture(null)
+    setUploadingPictures(false)
+  }
+
+  async function uploadAssetPictures(event) {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (!pictureAsset || !files.length) return
+    setUploadingPictures(true)
+    setError('')
+    try {
+      const formData = new FormData()
+      files.forEach((file) => formData.append('pictures', file))
+      const data = await request(`/api/assets/${pictureAsset.id}/pictures`, {
+        method: 'POST',
+        body: formData,
+      })
+      const uploaded = data.pictures || []
+      setPictures((current) => [...uploaded, ...current])
+      setAssets((current) => current.map((item) => (
+        Number(item.lineageId || item.id) === Number(pictureAsset.lineageId || pictureAsset.id)
+          ? { ...item, pictureCount: (Number(item.pictureCount) || 0) + uploaded.length }
+          : item
+      )))
+    } catch (uploadError) {
+      setError(uploadError.message || 'Unable to upload pictures')
+    } finally {
+      setUploadingPictures(false)
+    }
+  }
+
+  async function deleteAssetPicture(picture) {
+    if (!window.confirm('Delete this picture?')) return
+    setError('')
+    try {
+      await request(`/api/asset-pictures/${picture.id}`, { method: 'DELETE' })
+      setPictures((current) => current.filter((item) => item.id !== picture.id))
+      if (previewPicture?.id === picture.id) setPreviewPicture(null)
+      setAssets((current) => current.map((item) => (
+        Number(item.lineageId || item.id) === Number(pictureAsset.lineageId || pictureAsset.id)
+          ? { ...item, pictureCount: Math.max(0, (Number(item.pictureCount) || 0) - 1) }
+          : item
+      )))
+    } catch (deleteError) {
+      setError(deleteError.message || 'Unable to delete picture')
+    }
+  }
+
   async function saveRepairStatus(asset, repairStatus) {
     setError('')
     try {
@@ -876,6 +948,20 @@ export default function AssetManagement({ apiUrl }) {
                     <div className="flex gap-2">
                       <button
                         type="button"
+                        onClick={() => openPictureDialog(asset)}
+                        title="View pictures"
+                        aria-label={`View pictures for ${asset.name}`}
+                        className={`relative inline-flex h-9 w-9 items-center justify-center border hover:bg-sky-50 ${asset.pictureCount ? 'border-sky-300 text-sky-700' : 'border-slate-200 text-slate-700 hover:bg-slate-100'}`}
+                      >
+                        <Image className="h-4 w-4" />
+                        {Number(asset.pictureCount) > 0 ? (
+                          <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-sky-600 px-1 text-center text-[9px] font-bold leading-4 text-white">
+                            {asset.pictureCount > 9 ? '9+' : asset.pictureCount}
+                          </span>
+                        ) : null}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => openNoteDialog(asset)}
                         title={asset.notes ? 'Edit note' : 'Add note'}
                         aria-label={`${asset.notes ? 'Edit' : 'Add'} note for ${asset.name}`}
@@ -905,6 +991,86 @@ export default function AssetManagement({ apiUrl }) {
           </table>
         </div>
       </section>
+
+      {pictureAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={closePictureDialog}>
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="asset-pictures-dialog-title"
+            className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden border border-slate-200 bg-white p-4 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 id="asset-pictures-dialog-title" className="text-base font-bold text-slate-900">Asset pictures</h2>
+                <p className="truncate text-sm text-slate-500">{pictureAsset.name}</p>
+              </div>
+              <button
+                type="button"
+                onClick={closePictureDialog}
+                aria-label="Close pictures dialog"
+                className="inline-flex h-8 w-8 items-center justify-center border border-slate-200 text-slate-600 hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </header>
+
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-sky-700 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-800">
+                <Plus className="h-4 w-4" />
+                {uploadingPictures ? 'Uploading...' : 'Add pictures'}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  multiple
+                  disabled={uploadingPictures}
+                  onChange={uploadAssetPictures}
+                  className="hidden"
+                />
+              </label>
+              <p className="text-xs text-slate-500">{pictures.length} picture{pictures.length === 1 ? '' : 's'}</p>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {picturesLoading ? (
+                <p className="py-10 text-center text-sm text-slate-500">Loading pictures...</p>
+              ) : pictures.length ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {pictures.map((picture) => (
+                    <figure key={picture.id} className="group relative overflow-hidden border border-slate-200 bg-slate-50">
+                      <button type="button" onClick={() => setPreviewPicture(picture)} className="block w-full">
+                        <img src={picture.url} alt={picture.originalName || pictureAsset.name} className="h-36 w-full object-cover" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteAssetPicture(picture)}
+                        aria-label={`Delete picture ${picture.originalName || picture.id}`}
+                        className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center border border-rose-200 bg-white/90 text-rose-700 opacity-0 hover:bg-rose-50 group-hover:opacity-100"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </figure>
+                  ))}
+                </div>
+              ) : (
+                <p className="py-10 text-center text-sm text-slate-500">No pictures yet. Add one to start.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {previewPicture && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-4" onClick={() => setPreviewPicture(null)}>
+          <img
+            src={previewPicture.url}
+            alt={previewPicture.originalName || 'Asset picture'}
+            className="max-h-[90vh] max-w-full object-contain"
+            onClick={(event) => event.stopPropagation()}
+          />
+        </div>
+      )}
 
       {noteAsset && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4" onClick={closeNoteDialog}>

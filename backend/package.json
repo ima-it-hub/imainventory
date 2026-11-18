@@ -10,8 +10,11 @@
     "test": "node --test"
   },
   "dependencies": {
+    "cloudinary": "^2.11.0",
     "cors": "^2.8.5",
+    "dotenv": "^18.0.10",
     "express": "^4.21.2",
+    "multer": "^2.5.0",
     "odbc": "^2.4.9",
     "pg": "^8.16.0",
     "sqlite3": "^5.1.7"

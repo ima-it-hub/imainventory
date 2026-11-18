@@ -449,6 +449,17 @@ async function initializeDatabase() {
   await query('CREATE INDEX IF NOT EXISTS idx_assets_subplace_id ON assets(subplace_id);');
   await query('CREATE INDEX IF NOT EXISTS idx_asset_subplaces_place_id ON asset_subplaces(place_id);');
   await query(`
+    CREATE TABLE IF NOT EXISTS asset_pictures (
+      id SERIAL PRIMARY KEY,
+      lineage_id INTEGER NOT NULL,
+      url TEXT NOT NULL,
+      public_id TEXT NOT NULL,
+      original_name VARCHAR(255) NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await query('CREATE INDEX IF NOT EXISTS idx_asset_pictures_lineage_id ON asset_pictures(lineage_id);');
+  await query(`
     ALTER TABLE logistics_order_physical_counts
     ADD COLUMN IF NOT EXISTS control_quantities JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);

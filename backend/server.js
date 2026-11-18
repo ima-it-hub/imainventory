@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const crypto = require('node:crypto');
+const multer = require('multer');
+const { v2: cloudinary } = require('cloudinary');
 const {
   query,
   getItemBySearch,
@@ -45,6 +47,45 @@ const VENTE_RATEE_SOURCE = 'Vente ratée';
 // }));
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
+
+cloudinary.config({
+  cloud_name: config.cloudinary.cloudName,
+  api_key: config.cloudinary.apiKey,
+  api_secret: config.cloudinary.apiSecret,
+});
+
+const pictureUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 8 },
+  fileFilter(_req, file, callback) {
+    if (!/^image\/(jpeg|jpg|png|webp|gif)$/i.test(file.mimetype || '')) {
+      callback(new Error('Only JPEG, PNG, WebP, and GIF images are allowed.'));
+      return;
+    }
+    callback(null, true);
+  },
+});
+
+function uploadImageToCloudinary(file) {
+  if (!config.cloudinary.apiSecret) {
+    return Promise.reject(Object.assign(new Error('Add CLOUDINARY_API_SECRET to the backend .env file.'), { status: 500 }));
+  }
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream({
+      folder: 'inventory/assets',
+      resource_type: 'image',
+      use_filename: true,
+      unique_filename: true,
+    }, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+    stream.end(file.buffer);
+  });
+}
 
 function isVenteRateeSource(value) {
   return String(value || '').trim().toLowerCase() === VENTE_RATEE_SOURCE.toLowerCase();
@@ -473,7 +514,12 @@ app.get('/api/assets', async (req, res) => {
         asset.repair_status AS "repairStatus",
         COALESCE(asset.notes, '') AS "notes",
         asset.year,
-        asset.lineage_id AS "lineageId"
+        asset.lineage_id AS "lineageId",
+        (
+          SELECT COUNT(*)::integer
+          FROM asset_pictures pictures
+          WHERE pictures.lineage_id = COALESCE(asset.lineage_id, asset.id)
+        ) AS "pictureCount"
       FROM assets AS asset
       INNER JOIN asset_categories AS category ON category.id = asset.category_id
       INNER JOIN asset_places AS place ON place.id = asset.place_id
@@ -657,6 +703,73 @@ app.delete('/api/assets/:id', async (req, res) => {
   } catch (error) {
     console.error('Asset deletion failed:', error);
     res.status(500).json({ error: 'Unable to delete asset', details: error.message });
+  }
+});
+
+app.get('/api/assets/:id/pictures', async (req, res) => {
+  try {
+    const asset = await getAssetYearIdentity(req.params.id);
+    if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+    const pictures = await query(`
+      SELECT id, url, public_id AS "publicId", original_name AS "originalName", created_at AS "createdAt"
+      FROM asset_pictures
+      WHERE lineage_id = $1
+      ORDER BY created_at DESC, id DESC;
+    `, [asset.lineageId]);
+    res.json({ pictures, count: pictures.length });
+  } catch (error) {
+    console.error('Asset pictures fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch asset pictures', details: error.message });
+  }
+});
+
+app.post('/api/assets/:id/pictures', (req, res) => {
+  pictureUpload.array('pictures', 8)(req, res, async (uploadError) => {
+    try {
+      if (uploadError) {
+        return res.status(400).json({ error: uploadError.message || 'Unable to read the selected images.' });
+      }
+      const asset = await getAssetYearIdentity(req.params.id);
+      if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+      const files = req.files || [];
+      if (!files.length) return res.status(400).json({ error: 'Select at least one image to upload.' });
+
+      const saved = [];
+      for (const file of files) {
+        const uploaded = await uploadImageToCloudinary(file);
+        const rows = await query(`
+          INSERT INTO asset_pictures (lineage_id, url, public_id, original_name)
+          VALUES ($1, $2, $3, $4)
+          RETURNING id, url, public_id AS "publicId", original_name AS "originalName", created_at AS "createdAt";
+        `, [asset.lineageId, uploaded.secure_url || uploaded.url, uploaded.public_id, file.originalname || '']);
+        saved.push(rows[0]);
+      }
+      res.status(201).json({ pictures: saved, count: saved.length });
+    } catch (error) {
+      console.error('Asset picture upload failed:', error);
+      res.status(error.status || 500).json({ error: error.message || 'Unable to upload asset pictures', details: error.message });
+    }
+  });
+});
+
+app.delete('/api/asset-pictures/:id', async (req, res) => {
+  try {
+    const rows = await query(
+      'DELETE FROM asset_pictures WHERE id = $1 RETURNING id, public_id AS "publicId";',
+      [Number(req.params.id)],
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Picture not found.' });
+    if (rows[0].publicId && config.cloudinary.apiSecret) {
+      try {
+        await cloudinary.uploader.destroy(rows[0].publicId);
+      } catch (cloudinaryError) {
+        console.warn('Cloudinary picture delete skipped:', cloudinaryError.message);
+      }
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Asset picture deletion failed:', error);
+    res.status(500).json({ error: 'Unable to delete asset picture', details: error.message });
   }
 });
 

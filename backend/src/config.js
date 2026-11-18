@@ -1,7 +1,18 @@
+try {
+  require('dotenv').config();
+} catch {
+  // Optional: process env can still be provided by the host.
+}
+
 module.exports = {
   app: {
     port: Number(process.env.PORT || 4000),
     corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  },
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'wh7led5',
+    apiKey: process.env.CLOUDINARY_API_KEY || '982532856713325',
+    apiSecret: process.env.CLOUDINARY_API_SECRET || '',
   },
   database: {
     odbc: {

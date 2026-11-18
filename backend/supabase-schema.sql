@@ -132,3 +132,13 @@ CREATE INDEX IF NOT EXISTS idx_assets_subplace_id ON assets(subplace_id);
 CREATE INDEX IF NOT EXISTS idx_assets_year ON assets(year);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_lineage_year ON assets(lineage_id, year) WHERE lineage_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_asset_subplaces_place_id ON asset_subplaces(place_id);
+
+CREATE TABLE IF NOT EXISTS asset_pictures (
+  id SERIAL PRIMARY KEY,
+  lineage_id INTEGER NOT NULL,
+  url TEXT NOT NULL,
+  public_id TEXT NOT NULL,
+  original_name VARCHAR(255) NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_asset_pictures_lineage_id ON asset_pictures(lineage_id);

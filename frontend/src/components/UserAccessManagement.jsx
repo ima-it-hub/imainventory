@@ -2,6 +2,7 @@ import { KeyRound, Plus, Save, ShieldCheck, Trash2, UserRound } from 'lucide-rea
 import { useMemo, useState } from 'react'
 
 const pageDefinitions = [
+  { key: 'statistics', label: 'Statistics' },
   { key: 'inventory', label: 'Inventory' },
   { key: 'qr-scan', label: 'QR scan' },
   { key: 'logistics', label: 'Logistics' },

@@ -262,6 +262,8 @@ async function initializeDatabase() {
       purchase_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_value >= 0),
       current_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (current_value >= 0),
       repair_status VARCHAR(30) NOT NULL DEFAULT 'En service' CHECK (repair_status IN ('En service', 'En panne', 'En maintenance', 'Hors service', 'Vendu')),
+      year INTEGER NOT NULL DEFAULT 2026,
+      lineage_id INTEGER,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -414,6 +416,26 @@ async function initializeDatabase() {
     ALTER TABLE assets
     ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';
   `);
+  await query(`
+    ALTER TABLE assets
+    ADD COLUMN IF NOT EXISTS year INTEGER NOT NULL DEFAULT 2026;
+  `);
+  await query(`
+    ALTER TABLE assets
+    ADD COLUMN IF NOT EXISTS lineage_id INTEGER;
+  `);
+  await query(`
+    ALTER TABLE assets
+    ALTER COLUMN lineage_id DROP NOT NULL;
+  `);
+  await query(`
+    UPDATE assets
+    SET lineage_id = id
+    WHERE lineage_id IS NULL;
+  `);
+  await query('DROP INDEX IF EXISTS idx_assets_lineage_year;');
+  await query('CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_lineage_year ON assets(lineage_id, year) WHERE lineage_id IS NOT NULL;');
+  await query('CREATE INDEX IF NOT EXISTS idx_assets_year ON assets(year);');
   await query(`
     ALTER TABLE logistics_orders
     ADD COLUMN IF NOT EXISTS notes TEXT NOT NULL DEFAULT '';

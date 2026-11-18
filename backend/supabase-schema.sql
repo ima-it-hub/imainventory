@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS assets (
   purchase_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (purchase_value >= 0),
   current_value NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (current_value >= 0),
   repair_status VARCHAR(30) NOT NULL DEFAULT 'Réparable' CHECK (repair_status IN ('Réparable', 'Irréparable')),
+  year INTEGER NOT NULL DEFAULT 2026,
+  lineage_id INTEGER,
   CONSTRAINT assets_irreparable_value_check CHECK (repair_status <> 'Irréparable' OR current_value = 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -127,4 +129,6 @@ CREATE INDEX IF NOT EXISTS idx_physical_counts_item_id ON physical_counts(item_i
 CREATE INDEX IF NOT EXISTS idx_assets_category_id ON assets(category_id);
 CREATE INDEX IF NOT EXISTS idx_assets_place_id ON assets(place_id);
 CREATE INDEX IF NOT EXISTS idx_assets_subplace_id ON assets(subplace_id);
+CREATE INDEX IF NOT EXISTS idx_assets_year ON assets(year);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assets_lineage_year ON assets(lineage_id, year) WHERE lineage_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_asset_subplaces_place_id ON asset_subplaces(place_id);

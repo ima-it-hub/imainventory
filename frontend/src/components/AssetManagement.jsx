@@ -1,6 +1,20 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { Boxes, Check, ChevronDown, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
+import { Boxes, Calendar, Check, ChevronDown, MapPin, PackagePlus, Pencil, Plus, Printer, Search, StickyNote, Trash2, X } from 'lucide-react'
 import { useToast } from './ToastProvider'
+
+const ASSET_BASE_YEAR = 2026
+
+function buildAssetYears(maxYear = ASSET_BASE_YEAR) {
+  const currentYear = new Date().getFullYear()
+  const lastYear = Math.max(ASSET_BASE_YEAR, currentYear + 15, Number(maxYear) || ASSET_BASE_YEAR)
+  const years = []
+  for (let year = ASSET_BASE_YEAR; year <= lastYear; year += 1) years.push(year)
+  return years
+}
+
+function assetCode(asset) {
+  return `AST-${String(asset.lineageId || asset.id).padStart(6, '0')}`
+}
 
 const currencyFormatter = new Intl.NumberFormat('fr-DZ', {
   style: 'currency',
@@ -73,6 +87,8 @@ export default function AssetManagement({ apiUrl }) {
   const [categories, setCategories] = useState([])
   const [places, setPlaces] = useState([])
   const [search, setSearch] = useState('')
+  const [selectedYear, setSelectedYear] = useState(ASSET_BASE_YEAR)
+  const [availableYears, setAvailableYears] = useState(() => buildAssetYears())
   const [selectedCategoryIds, setSelectedCategoryIds] = useState([])
   const [selectedPlaceIds, setSelectedPlaceIds] = useState([])
   const [selectedSubplaceIds, setSelectedSubplaceIds] = useState([])
@@ -114,7 +130,7 @@ export default function AssetManagement({ apiUrl }) {
       return
     }
 
-    const code = `AST-${String(asset.id).padStart(6, '0')}`
+    const code = assetCode(asset)
     const assetName = escapeHtml(asset.name)
     const payload = JSON.stringify({ type: 'asset', id: asset.id, code })
     const qrImage = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(payload)}`
@@ -157,11 +173,14 @@ export default function AssetManagement({ apiUrl }) {
     if (!silent) setError('')
     try {
       const [assetData, categoryData, placeData] = await Promise.all([
-        request('/api/assets'),
+        request(`/api/assets?year=${selectedYear}`),
         request('/api/asset-categories'),
         request('/api/asset-places'),
       ])
       setAssets(assetData.assets || [])
+      if (Array.isArray(assetData.years) && assetData.years.length) {
+        setAvailableYears(buildAssetYears(Math.max(...assetData.years)))
+      }
       setCategories(categoryData.categories || [])
       setPlaces(placeData.places || [])
     } catch (loadError) {
@@ -195,7 +214,7 @@ export default function AssetManagement({ apiUrl }) {
       window.removeEventListener('focus', refreshData)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [])
+  }, [selectedYear])
 
   const filteredAssets = useMemo(() => {
     const term = search.trim().toLocaleLowerCase()
@@ -210,7 +229,7 @@ export default function AssetManagement({ apiUrl }) {
         if (!matchesPlace && !matchesSubplace) return false
       }
       if (!term) return true
-      return [asset.name, asset.categoryName, asset.placeName, asset.subplaceName, `AST-${String(asset.id).padStart(6, '0')}`]
+      return [asset.name, asset.categoryName, asset.placeName, asset.subplaceName, assetCode(asset)]
         .some((value) => String(value || '').toLocaleLowerCase().includes(term))
     })
   }, [assets, search, selectedCategoryIds, selectedPlaceIds, selectedSubplaceIds])
@@ -388,7 +407,7 @@ export default function AssetManagement({ apiUrl }) {
       await request(path, {
         method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, year: selectedYear }),
       })
       resetForm()
       await loadData()
@@ -589,7 +608,25 @@ export default function AssetManagement({ apiUrl }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <Calendar className="h-4 w-4 text-slate-500" />
+          Year
+          <select
+            value={selectedYear}
+            onChange={(event) => {
+              setSelectedYear(Number(event.target.value))
+              setCurrentValueDrafts({})
+            }}
+            aria-label="Asset year"
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-900 outline-none focus:border-sky-600"
+          >
+            {availableYears.map((year) => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </label>
+        <div className="flex flex-wrap justify-end gap-2">
         <button type="button" onClick={() => { resetForm(); setActiveDialog('asset') }} disabled={!categories.length || !places.length} className="inline-flex items-center gap-2 rounded-md bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-not-allowed disabled:opacity-50">
           <PackagePlus className="h-4 w-4" />Add asset
         </button>
@@ -599,6 +636,7 @@ export default function AssetManagement({ apiUrl }) {
         <button type="button" onClick={() => { setPlaceName(''); setSubplaceDrafts({}); setError(''); setActiveDialog('places') }} className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
           <Plus className="h-4 w-4" />Manage places
         </button>
+        </div>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -766,7 +804,7 @@ export default function AssetManagement({ apiUrl }) {
 
       <section className="border border-slate-200 bg-white p-4">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-base font-bold text-slate-900">Assets</h2>
+          <h2 className="text-base font-bold text-slate-900">Assets {selectedYear}</h2>
           <div className="relative w-full sm:max-w-sm">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search assets, categories, places" className="w-full rounded-md border border-slate-300 py-2 pl-9 pr-3 text-sm" />
@@ -778,7 +816,7 @@ export default function AssetManagement({ apiUrl }) {
             <tbody>
               {filteredAssets.map((asset) => (
                 <tr key={asset.id} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-3 py-3"><div className="font-semibold text-slate-900">{asset.name}</div><div className="text-xs text-slate-500">AST-{String(asset.id).padStart(6, '0')}</div></td>
+                  <td className="px-3 py-3"><div className="font-semibold text-slate-900">{asset.name}</div><div className="text-xs text-slate-500">{assetCode(asset)}</div></td>
                   <td className="px-3 py-3 text-slate-700">{asset.categoryName}</td>
                   <td className="px-3 py-3 text-slate-700">{Number(asset.quantity).toLocaleString()}</td>
                   <td className="px-3 py-3 text-slate-700">

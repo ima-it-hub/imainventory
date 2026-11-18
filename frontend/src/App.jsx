@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
+  BarChart3,
   Boxes,
   CalendarRange,
   Camera,
@@ -37,6 +38,7 @@ import InventoryItemDetailsDialog from './components/InventoryItemDetailsDialog'
 import OrderDetailsDialog from './components/OrderDetailsDialog'
 import DemandTransfer from './components/DemandTransfer'
 import VenteRatee from './components/VenteRatee'
+import LogisticsStatistics from './components/LogisticsStatistics'
 import { useToast } from './components/ToastProvider'
 import './App.css'
 
@@ -390,6 +392,7 @@ function App() {
   }, [selectedItem?.id, auditHistoryRevision])
 
   const sidebarPages = [
+    { key: 'statistics', label: 'Statistics', icon: BarChart3 },
     { key: 'inventory', label: 'Inventory', icon: Warehouse },
     { key: 'qr-scan', label: 'QR scan', icon: QrCode },
     { key: 'logistics', label: 'Logistics', icon: Truck },
@@ -2119,7 +2122,7 @@ function App() {
   }
 
   const visibleSidebarPages = sidebarPages.filter((page) => {
-    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'demand-transfer', 'vente-ratee', 'status-dashboard', 'team-tasks'].includes(page.key)
+    const isAdminVisiblePage = ['access', 'assets', 'transfer', 'demand-transfer', 'vente-ratee', 'status-dashboard', 'statistics', 'team-tasks'].includes(page.key)
     return isAdminVisiblePage
       ? currentUser?.role === 'admin' || allowedPages.includes(page.key)
       : allowedPages.includes(page.key)
@@ -2204,7 +2207,7 @@ function App() {
             />
           ) : null}
 
-          <div className={`main-panel flex min-h-screen w-full flex-1 flex-col space-y-2 px-2 pt-3 md:px-3 md:pt-4 ${activeView === 'assets' ? 'lg:pl-[226px]' : 'lg:pl-[210px]'} lg:pr-4 lg:pt-4`}>
+          <div className="main-panel flex min-h-screen w-full flex-1 flex-col space-y-2 px-2 pt-3 md:px-3 md:pt-4 lg:pl-[234px] lg:pr-4 lg:pt-4">
             <header className="app-header flex flex-col gap-3 border-b border-slate-200 bg-white p-3 md:flex-row md:items-center md:justify-between">
               <div className="brand-wrap flex items-center gap-3">
                 <button
@@ -2237,6 +2240,8 @@ function App() {
                                     ? 'Vente ratée'
                                         : activeView === 'status-dashboard'
                                           ? 'Order Status Dashboard'
+                                          : activeView === 'statistics'
+                                            ? 'Logistics Statistics'
                                             : activeView === 'team-tasks'
                                               ? 'Team To-do list'
                                 : 'Logistics Management'}
@@ -2421,6 +2426,12 @@ function App() {
                 setScheduleForm={setScheduleForm}
                 onAddDeliverySlot={handleAddDeliverySlot}
                 onDeleteDeliverySlot={handleDeleteDeliverySlot}
+              />
+            ) : activeView === 'statistics' ? (
+              <LogisticsStatistics
+                apiUrl={API_URL}
+                warehouses={warehouses}
+                employees={employees}
               />
             ) : activeView === 'status-dashboard' ? (
               <OrderStatusDashboard

@@ -355,8 +355,108 @@ app.delete('/api/asset-places/:id', async (req, res) => {
   }
 });
 
-app.get('/api/assets', async (_req, res) => {
+const ASSET_BASE_YEAR = 2026;
+const ASSET_YEAR_HORIZON = 50;
+
+function parseAssetYear(value, fallback = ASSET_BASE_YEAR) {
+  const year = Number(value === undefined || value === null || value === '' ? fallback : value);
+  if (!Number.isInteger(year) || year < ASSET_BASE_YEAR || year > ASSET_BASE_YEAR + ASSET_YEAR_HORIZON) {
+    throw Object.assign(new Error('Choose a valid asset year.'), { status: 400 });
+  }
+  return year;
+}
+
+function buildAssetYearList(maxYear = ASSET_BASE_YEAR) {
+  const currentYear = new Date().getFullYear();
+  const lastYear = Math.min(
+    ASSET_BASE_YEAR + ASSET_YEAR_HORIZON,
+    Math.max(ASSET_BASE_YEAR, currentYear + 15, Number(maxYear) || ASSET_BASE_YEAR),
+  );
+  const years = [];
+  for (let year = ASSET_BASE_YEAR; year <= lastYear; year += 1) years.push(year);
+  return years;
+}
+
+async function listAssetYears() {
+  const rows = await query('SELECT COALESCE(MAX(year), $1)::integer AS "maxYear" FROM assets;', [ASSET_BASE_YEAR]);
+  return buildAssetYearList(rows[0]?.maxYear);
+}
+
+async function ensureAssetYear(year) {
+  const targetYear = parseAssetYear(year);
+  for (let nextYear = ASSET_BASE_YEAR + 1; nextYear <= targetYear; nextYear += 1) {
+    await query(`
+      INSERT INTO assets (
+        name, category_id, quantity, place_id, subplace_id,
+        purchase_value, current_value, repair_status, notes, year, lineage_id
+      )
+      SELECT
+        src.name, src.category_id, src.quantity, src.place_id, src.subplace_id,
+        src.purchase_value, src.current_value, src.repair_status, src.notes, $1, src.lineage_id
+      FROM assets src
+      WHERE src.year = $2
+        AND NOT EXISTS (
+          SELECT 1 FROM assets dest
+          WHERE dest.lineage_id = src.lineage_id AND dest.year = $1
+        );
+    `, [nextYear, nextYear - 1]);
+  }
+  return targetYear;
+}
+
+async function copyAssetForward(sourceId, sourceYear, lineageId) {
+  const futureYears = await query(
+    'SELECT DISTINCT year FROM assets WHERE year > $1 ORDER BY year ASC;',
+    [sourceYear],
+  );
+  for (const row of futureYears) {
+    await query(`
+      INSERT INTO assets (
+        name, category_id, quantity, place_id, subplace_id,
+        purchase_value, current_value, repair_status, notes, year, lineage_id
+      )
+      SELECT
+        src.name, src.category_id, src.quantity, src.place_id, src.subplace_id,
+        src.purchase_value, src.current_value, src.repair_status, src.notes, $1, src.lineage_id
+      FROM assets src
+      WHERE src.id = $2
+        AND NOT EXISTS (
+          SELECT 1 FROM assets dest
+          WHERE dest.lineage_id = $3 AND dest.year = $1
+        );
+    `, [row.year, sourceId, lineageId]);
+  }
+}
+
+async function getAssetYearIdentity(id) {
+  const rows = await query(
+    'SELECT id, year, lineage_id AS "lineageId" FROM assets WHERE id = $1;',
+    [Number(id)],
+  );
+  return rows[0] || null;
+}
+
+async function updateAssetsFromYear(id, setSql, params, returningSql) {
+  const asset = await getAssetYearIdentity(id);
+  if (!asset) return [];
+  const lineageIndex = params.length + 1;
+  const yearIndex = params.length + 2;
+  return query(`
+    UPDATE assets
+    SET ${setSql}
+    WHERE lineage_id = $${lineageIndex} AND year >= $${yearIndex}
+    RETURNING ${returningSql};
+  `, [...params, asset.lineageId, asset.year]);
+}
+
+function pickAssetForId(rows, id) {
+  return (rows || []).find((row) => Number(row.id) === Number(id)) || rows?.[0] || null;
+}
+
+app.get('/api/assets', async (req, res) => {
   try {
+    const year = await ensureAssetYear(parseAssetYear(req.query.year));
+    const years = await listAssetYears();
     const assets = await query(`
       SELECT
         asset.id,
@@ -371,15 +471,19 @@ app.get('/api/assets', async (_req, res) => {
         asset.purchase_value AS "purchaseValue",
         asset.current_value AS "currentValue",
         asset.repair_status AS "repairStatus",
-        COALESCE(asset.notes, '') AS "notes"
+        COALESCE(asset.notes, '') AS "notes",
+        asset.year,
+        asset.lineage_id AS "lineageId"
       FROM assets AS asset
       INNER JOIN asset_categories AS category ON category.id = asset.category_id
       INNER JOIN asset_places AS place ON place.id = asset.place_id
       LEFT JOIN asset_subplaces AS subplace ON subplace.id = asset.subplace_id
+      WHERE asset.year = $1
       ORDER BY asset.name ASC, asset.id ASC;
-    `);
-    res.json({ assets, count: assets.length });
+    `, [year]);
+    res.json({ assets, count: assets.length, year, years });
   } catch (error) {
+    if (error.status) return res.status(error.status).json({ error: error.message });
     console.error('Assets fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch assets', details: error.message });
   }
@@ -387,7 +491,7 @@ app.get('/api/assets', async (_req, res) => {
 
 app.post('/api/assets', async (req, res) => {
   try {
-    const { name, categoryId, quantity, placeId, subplaceId, purchaseValue, currentValue, repairStatus } = req.body || {};
+    const { name, categoryId, quantity, placeId, subplaceId, purchaseValue, currentValue, repairStatus, year } = req.body || {};
     const cleanName = String(name || '').trim();
     const numericQuantity = Number(quantity);
     const numericPurchaseValue = Number(purchaseValue);
@@ -396,6 +500,7 @@ app.post('/api/assets', async (req, res) => {
       : Number(currentValue);
     const numericCategoryId = Number(categoryId);
     const numericPlaceId = Number(placeId);
+    const assetYear = await ensureAssetYear(parseAssetYear(year));
     const normalizedRepairStatus = repairStatus || 'En service';
     const savedCurrentValue = ['Hors service', 'Vendu'].includes(normalizedRepairStatus) ? 0 : numericCurrentValue;
 
@@ -411,11 +516,18 @@ app.post('/api/assets', async (req, res) => {
     const numericSubplaceId = await resolveAssetSubplaceId(numericPlaceId, subplaceId);
 
     const rows = await query(`
-      INSERT INTO assets (name, category_id, quantity, place_id, subplace_id, purchase_value, current_value, repair_status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", subplace_id AS "subplaceId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus";
-    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericSubplaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus]);
-    res.status(201).json({ asset: rows[0] });
+      INSERT INTO assets (name, category_id, quantity, place_id, subplace_id, purchase_value, current_value, repair_status, year)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id;
+    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericSubplaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus, assetYear]);
+    const withLineage = await query(`
+      UPDATE assets SET lineage_id = id
+      WHERE id = $1
+      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", subplace_id AS "subplaceId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus", year, lineage_id AS "lineageId";
+    `, [rows[0].id]);
+    const asset = withLineage[0];
+    await copyAssetForward(asset.id, asset.year, asset.lineageId);
+    res.status(201).json({ asset });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
     if (error.code === '23503') return res.status(400).json({ error: 'Select an existing category, place, and subplace.' });
@@ -448,16 +560,16 @@ app.put('/api/assets/:id', async (req, res) => {
     }
 
     const numericSubplaceId = await resolveAssetSubplaceId(numericPlaceId, subplaceId);
-
-    const rows = await query(`
-      UPDATE assets
-      SET name = $1, category_id = $2, quantity = $3, place_id = $4, subplace_id = $5,
-          purchase_value = $6, current_value = $7, repair_status = $8, updated_at = NOW()
-      WHERE id = $9
-      RETURNING id, name, category_id AS "categoryId", quantity, place_id AS "placeId", subplace_id AS "subplaceId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus";
-    `, [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericSubplaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus, Number(req.params.id)]);
-    if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
-    res.json({ asset: rows[0] });
+    const rows = await updateAssetsFromYear(
+      req.params.id,
+      `name = $1, category_id = $2, quantity = $3, place_id = $4, subplace_id = $5,
+       purchase_value = $6, current_value = $7, repair_status = $8, updated_at = NOW()`,
+      [cleanName, numericCategoryId, numericQuantity, numericPlaceId, numericSubplaceId, numericPurchaseValue, savedCurrentValue, normalizedRepairStatus],
+      'id, name, category_id AS "categoryId", quantity, place_id AS "placeId", subplace_id AS "subplaceId", purchase_value AS "purchaseValue", current_value AS "currentValue", repair_status AS "repairStatus", year, lineage_id AS "lineageId"',
+    );
+    const asset = pickAssetForId(rows, req.params.id);
+    if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+    res.json({ asset });
   } catch (error) {
     if (error.status) return res.status(error.status).json({ error: error.message });
     if (error.code === '23503') return res.status(400).json({ error: 'Select an existing category, place, and subplace.' });
@@ -474,16 +586,17 @@ app.patch('/api/assets/:id/repair-status', async (req, res) => {
     }
 
     const forcesZeroValue = ['Hors service', 'Vendu'].includes(repairStatus);
-    const rows = await query(`
-      UPDATE assets
-      SET repair_status = $1,
-          current_value = ${forcesZeroValue ? '0' : 'current_value'},
-          updated_at = NOW()
-      WHERE id = $2
-      RETURNING id, repair_status AS "repairStatus", current_value AS "currentValue";
-    `, [repairStatus, Number(req.params.id)]);
-    if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
-    res.json({ asset: rows[0] });
+    const rows = await updateAssetsFromYear(
+      req.params.id,
+      `repair_status = $1,
+       current_value = ${forcesZeroValue ? '0' : 'current_value'},
+       updated_at = NOW()`,
+      [repairStatus],
+      'id, repair_status AS "repairStatus", current_value AS "currentValue", year, lineage_id AS "lineageId"',
+    );
+    const asset = pickAssetForId(rows, req.params.id);
+    if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+    res.json({ asset });
   } catch (error) {
     console.error('Asset repair status update failed:', error);
     res.status(500).json({ error: 'Unable to update repair status', details: error.message });
@@ -497,15 +610,16 @@ app.patch('/api/assets/:id/current-value', async (req, res) => {
       return res.status(400).json({ error: 'Current value must be a non-negative number.' });
     }
 
-    const rows = await query(`
-      UPDATE assets
-        SET current_value = CASE WHEN repair_status IN ('Hors service', 'Vendu') THEN 0 ELSE $1 END,
-          updated_at = NOW()
-      WHERE id = $2
-        RETURNING id, current_value AS "currentValue", repair_status AS "repairStatus";
-    `, [currentValue, Number(req.params.id)]);
-    if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
-    res.json({ asset: rows[0] });
+    const rows = await updateAssetsFromYear(
+      req.params.id,
+      `current_value = CASE WHEN repair_status IN ('Hors service', 'Vendu') THEN 0 ELSE $1 END,
+       updated_at = NOW()`,
+      [currentValue],
+      'id, current_value AS "currentValue", repair_status AS "repairStatus", year, lineage_id AS "lineageId"',
+    );
+    const asset = pickAssetForId(rows, req.params.id);
+    if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+    res.json({ asset });
   } catch (error) {
     console.error('Asset current value update failed:', error);
     res.status(500).json({ error: 'Unable to update current value', details: error.message });
@@ -519,14 +633,15 @@ app.patch('/api/assets/:id/notes', async (req, res) => {
       return res.status(400).json({ error: 'Notes must be at most 5,000 characters.' });
     }
 
-    const rows = await query(`
-      UPDATE assets
-      SET notes = $1, updated_at = NOW()
-      WHERE id = $2
-      RETURNING id, COALESCE(notes, '') AS "notes";
-    `, [notes, Number(req.params.id)]);
-    if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
-    res.json({ asset: rows[0] });
+    const rows = await updateAssetsFromYear(
+      req.params.id,
+      'notes = $1, updated_at = NOW()',
+      [notes],
+      'id, COALESCE(notes, \'\') AS "notes", year, lineage_id AS "lineageId"',
+    );
+    const asset = pickAssetForId(rows, req.params.id);
+    if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+    res.json({ asset });
   } catch (error) {
     console.error('Asset notes update failed:', error);
     res.status(500).json({ error: 'Unable to update asset notes', details: error.message });
@@ -535,8 +650,9 @@ app.patch('/api/assets/:id/notes', async (req, res) => {
 
 app.delete('/api/assets/:id', async (req, res) => {
   try {
-    const rows = await query('DELETE FROM assets WHERE id = $1 RETURNING id;', [Number(req.params.id)]);
-    if (!rows.length) return res.status(404).json({ error: 'Asset not found.' });
+    const asset = await getAssetYearIdentity(req.params.id);
+    if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+    await query('DELETE FROM assets WHERE lineage_id = $1 AND year >= $2;', [asset.lineageId, asset.year]);
     res.json({ ok: true });
   } catch (error) {
     console.error('Asset deletion failed:', error);
@@ -1168,6 +1284,377 @@ app.get('/api/logistics/orders', async (req, res) => {
   } catch (error) {
     console.error('Logistics orders fetch failed:', error);
     res.status(500).json({ error: 'Unable to fetch logistics orders', details: error.message });
+  }
+});
+
+app.get('/api/logistics/statistics', async (req, res) => {
+  try {
+    const warehouse = String(req.query.warehouse || '').trim();
+    const employee = String(req.query.employee || '').trim();
+    const fromText = String(req.query.from || '').trim();
+    const toText = String(req.query.to || '').trim();
+    const fromDate = fromText ? new Date(`${fromText}T00:00:00`) : null;
+    const toDate = toText ? new Date(`${toText}T23:59:59.999`) : null;
+    const fromIso = fromDate && Number.isFinite(fromDate.getTime()) ? fromDate.toISOString() : null;
+    const toIso = toDate && Number.isFinite(toDate.getTime()) ? toDate.toISOString() : null;
+
+    const orderParams = [fromIso, toIso, warehouse || null, employee || null];
+    const orderWhere = `
+      ($1::timestamptz IS NULL OR lo.created_at >= $1)
+      AND ($2::timestamptz IS NULL OR lo.created_at <= $2)
+      AND ($3::text IS NULL OR LOWER(TRIM(COALESCE(lo.warehouse_name, ''))) = LOWER(TRIM($3)))
+      AND (
+        $4::text IS NULL
+        OR lo.employee_prepared = $4
+        OR counts.employee_prepared_id = $4
+        OR counts.controller_employee_id = $4
+      )
+    `;
+    const demandWhere = `
+      ($1::timestamptz IS NULL OR dt.created_at >= $1)
+      AND ($2::timestamptz IS NULL OR dt.created_at <= $2)
+      AND (
+        $3::text IS NULL
+        OR LOWER(TRIM(COALESCE(dt.requesting_warehouse, ''))) = LOWER(TRIM($3))
+        OR LOWER(TRIM(COALESCE(dt.source_warehouse, ''))) = LOWER(TRIM($3))
+        OR LOWER(TRIM(COALESCE(lo.warehouse_name, ''))) = LOWER(TRIM($3))
+      )
+      AND (
+        $4::text IS NULL
+        OR lo.employee_prepared = $4
+        OR counts.employee_prepared_id = $4
+        OR counts.controller_employee_id = $4
+        OR dt.requested_by = $4
+        OR dt.updated_by = $4
+      )
+    `;
+
+    const [
+      summaryRows,
+      statusRows,
+      dailyRows,
+      warehouseRows,
+      wilayaRows,
+      preparedRows,
+      controlledRows,
+      packingByEmpRows,
+      deliveryByEmpRows,
+      hourRows,
+      weekdayRows,
+      demandStatusRows,
+      demandSourceRows,
+      demandRequestRows,
+      demandDailyRows,
+      transferStatusRows,
+      transferDailyRows,
+      transferSourceRows,
+      transferDestRows,
+    ] = await Promise.all([
+      query(`
+        SELECT
+          COUNT(*)::integer AS "totalOrders",
+          COUNT(*) FILTER (WHERE lo.status = 'Pending')::integer AS pending,
+          COUNT(*) FILTER (WHERE lo.status = 'Packing')::integer AS packing,
+          COUNT(*) FILTER (WHERE lo.status = 'Ready')::integer AS ready,
+          COUNT(*) FILTER (WHERE lo.status = 'Delivered')::integer AS delivered,
+          COUNT(*) FILTER (WHERE lo.status IN ('Cancelled', 'Failed', 'Annulled'))::integer AS cancelled,
+          COUNT(*) FILTER (WHERE COALESCE(counts.quantities_match, false) = true)::integer AS "matchedOrders",
+          COUNT(DISTINCT NULLIF(COALESCE(lo.employee_prepared, counts.employee_prepared_id), ''))::integer AS "prepEmployees",
+          COUNT(DISTINCT NULLIF(counts.controller_employee_id, ''))::integer AS "controlEmployees",
+          AVG(EXTRACT(EPOCH FROM (lo.ready_at - lo.packing_started_at))) FILTER (
+            WHERE lo.packing_started_at IS NOT NULL AND lo.ready_at IS NOT NULL
+          ) AS "avgPackingSeconds",
+          AVG(EXTRACT(EPOCH FROM (lo.ready_at - lo.created_at))) FILTER (
+            WHERE lo.ready_at IS NOT NULL
+          ) AS "avgReadySeconds",
+          AVG(EXTRACT(EPOCH FROM (lo.delivered_at - lo.ready_at))) FILTER (
+            WHERE lo.delivered_at IS NOT NULL AND lo.ready_at IS NOT NULL
+          ) AS "avgDeliverySeconds",
+          AVG(EXTRACT(EPOCH FROM (lo.delivered_at - lo.created_at))) FILTER (
+            WHERE lo.delivered_at IS NOT NULL
+          ) AS "avgCreatedToDeliveredSeconds"
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere};
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(lo.status), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere}
+        GROUP BY 1
+        ORDER BY value DESC;
+      `, orderParams),
+      query(`
+        SELECT TO_CHAR(DATE(lo.created_at), 'YYYY-MM-DD') AS date,
+          COUNT(*)::integer AS orders,
+          COUNT(*) FILTER (WHERE lo.status = 'Ready')::integer AS ready,
+          COUNT(*) FILTER (WHERE lo.status = 'Delivered')::integer AS delivered,
+          COUNT(*) FILTER (WHERE lo.status = 'Packing')::integer AS packing
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere}
+        GROUP BY DATE(lo.created_at)
+        ORDER BY DATE(lo.created_at) ASC;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(lo.warehouse_name), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere}
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 12;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(lo.wilaya), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere}
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 12;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(COALESCE(prep.name, lo.employee_prepared, counts.employee_prepared_id)), ''), 'Unassigned') AS name,
+          COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        LEFT JOIN employees prep ON prep.employee_id = lo.employee_prepared
+        WHERE ${orderWhere}
+          AND COALESCE(lo.employee_prepared, counts.employee_prepared_id, '') <> ''
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 15;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(COALESCE(ctrl.name, counts.controller_employee_id)), ''), 'Unassigned') AS name,
+          COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        LEFT JOIN employees ctrl ON ctrl.employee_id = counts.controller_employee_id
+        WHERE ${orderWhere}
+          AND COALESCE(counts.controller_employee_id, '') <> ''
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 15;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(COALESCE(prep.name, lo.employee_prepared, counts.employee_prepared_id)), ''), 'Unassigned') AS name,
+          ROUND(AVG(EXTRACT(EPOCH FROM (lo.ready_at - lo.packing_started_at))) FILTER (
+            WHERE lo.packing_started_at IS NOT NULL AND lo.ready_at IS NOT NULL
+          ) / 60.0, 1) AS minutes
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        LEFT JOIN employees prep ON prep.employee_id = lo.employee_prepared
+        WHERE ${orderWhere}
+          AND lo.packing_started_at IS NOT NULL AND lo.ready_at IS NOT NULL
+        GROUP BY 1
+        ORDER BY minutes ASC NULLS LAST
+        LIMIT 15;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(COALESCE(prep.name, lo.employee_prepared)), ''), 'Unassigned') AS name,
+          ROUND(AVG(EXTRACT(EPOCH FROM (lo.delivered_at - lo.ready_at))) FILTER (
+            WHERE lo.delivered_at IS NOT NULL AND lo.ready_at IS NOT NULL
+          ) / 60.0, 1) AS minutes
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        LEFT JOIN employees prep ON prep.employee_id = lo.employee_prepared
+        WHERE ${orderWhere}
+          AND lo.delivered_at IS NOT NULL AND lo.ready_at IS NOT NULL
+        GROUP BY 1
+        ORDER BY minutes ASC NULLS LAST
+        LIMIT 15;
+      `, orderParams),
+      query(`
+        SELECT EXTRACT(HOUR FROM lo.created_at)::integer AS hour, COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere}
+        GROUP BY 1
+        ORDER BY 1 ASC;
+      `, orderParams),
+      query(`
+        SELECT TO_CHAR(lo.created_at, 'Dy') AS name,
+          EXTRACT(DOW FROM lo.created_at)::integer AS dow,
+          COUNT(*)::integer AS value
+        FROM logistics_orders lo
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = lo.order_number
+        WHERE ${orderWhere}
+        GROUP BY 1, 2
+        ORDER BY 2 ASC;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(dt.status, 'unknown') AS name, COUNT(*)::integer AS value
+        FROM demand_transfers dt
+        LEFT JOIN logistics_orders lo ON lo.order_number = dt.order_number
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = dt.order_number
+        WHERE ${demandWhere}
+        GROUP BY 1
+        ORDER BY value DESC;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(dt.source_warehouse), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM demand_transfers dt
+        LEFT JOIN logistics_orders lo ON lo.order_number = dt.order_number
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = dt.order_number
+        WHERE ${demandWhere}
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 12;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(dt.requesting_warehouse), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM demand_transfers dt
+        LEFT JOIN logistics_orders lo ON lo.order_number = dt.order_number
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = dt.order_number
+        WHERE ${demandWhere}
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 12;
+      `, orderParams),
+      query(`
+        SELECT TO_CHAR(DATE(dt.created_at), 'YYYY-MM-DD') AS date, COUNT(*)::integer AS demands
+        FROM demand_transfers dt
+        LEFT JOIN logistics_orders lo ON lo.order_number = dt.order_number
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = dt.order_number
+        WHERE ${demandWhere}
+        GROUP BY DATE(dt.created_at)
+        ORDER BY DATE(dt.created_at) ASC;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(status.status, 'Pending') AS name, COUNT(*)::integer AS value
+        FROM logistics_transfers transfer
+        LEFT JOIN logistics_transfer_statuses status ON status.transfer_reference = transfer.transfer_reference
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = transfer.transfer_reference
+        WHERE ($1::timestamptz IS NULL OR transfer.document_date >= $1)
+          AND ($2::timestamptz IS NULL OR transfer.document_date <= $2)
+          AND (
+            $3::text IS NULL
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_source_name, ''))) = LOWER(TRIM($3))
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_destination_name, ''))) = LOWER(TRIM($3))
+          )
+          AND (
+            $4::text IS NULL
+            OR counts.employee_prepared_id = $4
+            OR counts.controller_employee_id = $4
+          )
+        GROUP BY 1
+        ORDER BY value DESC;
+      `, orderParams),
+      query(`
+        SELECT TO_CHAR(DATE(transfer.document_date), 'YYYY-MM-DD') AS date, COUNT(*)::integer AS transfers
+        FROM logistics_transfers transfer
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = transfer.transfer_reference
+        WHERE ($1::timestamptz IS NULL OR transfer.document_date >= $1)
+          AND ($2::timestamptz IS NULL OR transfer.document_date <= $2)
+          AND (
+            $3::text IS NULL
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_source_name, ''))) = LOWER(TRIM($3))
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_destination_name, ''))) = LOWER(TRIM($3))
+          )
+          AND (
+            $4::text IS NULL
+            OR counts.employee_prepared_id = $4
+            OR counts.controller_employee_id = $4
+          )
+          AND transfer.document_date IS NOT NULL
+        GROUP BY DATE(transfer.document_date)
+        ORDER BY DATE(transfer.document_date) ASC;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(transfer.warehouse_source_name), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM logistics_transfers transfer
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = transfer.transfer_reference
+        WHERE ($1::timestamptz IS NULL OR transfer.document_date >= $1)
+          AND ($2::timestamptz IS NULL OR transfer.document_date <= $2)
+          AND (
+            $3::text IS NULL
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_source_name, ''))) = LOWER(TRIM($3))
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_destination_name, ''))) = LOWER(TRIM($3))
+          )
+          AND (
+            $4::text IS NULL
+            OR counts.employee_prepared_id = $4
+            OR counts.controller_employee_id = $4
+          )
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 12;
+      `, orderParams),
+      query(`
+        SELECT COALESCE(NULLIF(TRIM(transfer.warehouse_destination_name), ''), 'Unknown') AS name, COUNT(*)::integer AS value
+        FROM logistics_transfers transfer
+        LEFT JOIN logistics_order_physical_counts counts ON counts.order_number = transfer.transfer_reference
+        WHERE ($1::timestamptz IS NULL OR transfer.document_date >= $1)
+          AND ($2::timestamptz IS NULL OR transfer.document_date <= $2)
+          AND (
+            $3::text IS NULL
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_source_name, ''))) = LOWER(TRIM($3))
+            OR LOWER(TRIM(COALESCE(transfer.warehouse_destination_name, ''))) = LOWER(TRIM($3))
+          )
+          AND (
+            $4::text IS NULL
+            OR counts.employee_prepared_id = $4
+            OR counts.controller_employee_id = $4
+          )
+        GROUP BY 1
+        ORDER BY value DESC
+        LIMIT 12;
+      `, orderParams),
+    ]);
+
+    const summary = summaryRows[0] || {};
+    const demandTotal = (demandStatusRows || []).reduce((sum, row) => sum + Number(row.value || 0), 0);
+    const transferTotal = (transferStatusRows || []).reduce((sum, row) => sum + Number(row.value || 0), 0);
+    const hours = Array.from({ length: 24 }, (_, hour) => {
+      const found = (hourRows || []).find((row) => Number(row.hour) === hour);
+      return { hour: `${String(hour).padStart(2, '0')}h`, value: found ? Number(found.value) : 0 };
+    });
+
+    res.json({
+      cards: {
+        totalOrders: Number(summary.totalOrders || 0),
+        pending: Number(summary.pending || 0),
+        packing: Number(summary.packing || 0),
+        ready: Number(summary.ready || 0),
+        delivered: Number(summary.delivered || 0),
+        cancelled: Number(summary.cancelled || 0),
+        matchedOrders: Number(summary.matchedOrders || 0),
+        prepEmployees: Number(summary.prepEmployees || 0),
+        controlEmployees: Number(summary.controlEmployees || 0),
+        avgPackingSeconds: Number(summary.avgPackingSeconds) || null,
+        avgReadySeconds: Number(summary.avgReadySeconds) || null,
+        avgDeliverySeconds: Number(summary.avgDeliverySeconds) || null,
+        avgCreatedToDeliveredSeconds: Number(summary.avgCreatedToDeliveredSeconds) || null,
+        demandTransfers: demandTotal,
+        transfers: transferTotal,
+      },
+      charts: {
+        ordersByStatus: statusRows,
+        ordersByDay: dailyRows,
+        ordersByWarehouse: warehouseRows,
+        ordersByWilaya: wilayaRows,
+        preparedByEmployee: preparedRows,
+        controlledByEmployee: controlledRows,
+        packingTimeByEmployee: packingByEmpRows,
+        deliveryTimeByEmployee: deliveryByEmpRows,
+        ordersByHour: hours,
+        ordersByWeekday: weekdayRows,
+        demandByStatus: demandStatusRows,
+        demandBySource: demandSourceRows,
+        demandByRequesting: demandRequestRows,
+        demandByDay: demandDailyRows,
+        transfersByStatus: transferStatusRows,
+        transfersByDay: transferDailyRows,
+        transfersBySource: transferSourceRows,
+        transfersByDestination: transferDestRows,
+      },
+    });
+  } catch (error) {
+    console.error('Logistics statistics fetch failed:', error);
+    res.status(500).json({ error: 'Unable to fetch logistics statistics', details: error.message });
   }
 });
 
